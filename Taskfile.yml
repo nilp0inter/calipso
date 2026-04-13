@@ -1,0 +1,58 @@
+version: '3'
+
+silent: true
+
+output:
+  group:
+    begin: '::group::{{.TASK}}'
+    end: '::endgroup::'
+
+tasks:
+  setup:
+    desc: Install project dependencies
+    cmds:
+      - uv sync
+
+  format:
+    desc: Auto-format code
+    cmds:
+      - ruff format src/ tests/
+
+  format:check:
+    desc: Check formatting without modifying
+    cmds:
+      - ruff format --check src/ tests/
+
+  lint:
+    desc: Lint all code
+    cmds:
+      - ruff check src/ tests/
+
+  tests:unit:
+    desc: Run unit tests
+    deps: [setup]
+    cmds:
+      - uv run pytest tests/
+
+  docs:build:
+    desc: Build documentation site
+    dir: docs
+    cmds:
+      - mdbook build
+    sources:
+      - src/**/*
+      - book.toml
+    generates:
+      - book/**/*
+
+  docs:serve:
+    desc: Serve documentation with live reload
+    dir: docs
+    cmds:
+      - mdbook serve --open
+
+  run:
+    desc: Run the calipso agent
+    deps: [setup]
+    cmds:
+      - uv run calipso

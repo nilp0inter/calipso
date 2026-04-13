@@ -1,0 +1,22 @@
+# Nix / direnv
+.direnv
+
+# go-task checksum cache
+.task/
+
+# Build outputs
+build/
+dist/
+
+# Documentation build output
+docs/book/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+
+# Environment files
+.env

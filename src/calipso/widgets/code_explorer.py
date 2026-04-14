@@ -127,8 +127,9 @@ class CodeExplorer(Widget):
                 "",
                 "**All code bodies have been redacted.** "
                 "Signatures are shown verbatim; bodies are replaced with "
-                "`[...REDACTED...]` followed by a description. "
-                "Comments and docstrings have been removed.",
+                "`# [ CODE REDACTED ]` and a docstring describing what "
+                "the code does. Original comments and docstrings "
+                "have been removed.",
                 "",
                 f"{len(self.open_files)} file(s) open:",
                 "",
@@ -233,9 +234,8 @@ class CodeExplorer(Widget):
             code_parts.append(text)
         raw_code = "\n\n".join(code_parts)
         result = await self._summarizer.run(raw_code)
-        cleaned = _extract_signatures(result.output.encode(), self._parser)
-        self.query_results[path] = cleaned
-        return f"{path}:\n{cleaned}"
+        self.query_results[path] = result.output
+        return f"{path}:\n{result.output}"
 
     async def _query_all(self, query_str: str) -> str:
         if not self.open_files:

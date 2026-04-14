@@ -14,19 +14,34 @@ The agentic loop. Takes a `Model` and a `Context` widget, then:
 1. Materializes the context's views (`view_messages()`, `view_tools()`)
 2. Calls `Model.request()` directly
 3. Dispatches tool calls back to the context
-4. Loops until the model produces a text response
+4. Calls an optional `on_update` callback after every state mutation (used by the dashboard)
+5. Loops until the model produces a text response
+
+## Dashboard Server
+
+**Source:** `src/calipso/server.py`
+
+An aiohttp HTTP + WebSocket server that provides a live browser dashboard. Serves the SPA at `/` and accepts WebSocket connections at `/ws`. On connection, sends all widget HTML. After every state mutation, pushes only changed widget fragments via htmx out-of-band swaps. Also handles turn lifecycle signals (thinking indicator, input disabling).
+
+User input arrives over the WebSocket and is enqueued in an `asyncio.Queue` consumed by the CLI's main loop.
 
 ## CLI
 
 **Source:** `src/calipso/cli.py`
 
-A REPL entry point registered as the `calipso` console script in `pyproject.toml`. Creates the model, assembles the widget tree into a `Context`, and runs the turn loop.
+An async entry point registered as the `calipso` console script in `pyproject.toml`. Creates the model, assembles the widget tree into a `Context`, starts the `DashboardServer`, and loops reading user input from the server's WebSocket queue.
 
 Each turn's raw HTTP request/response payloads are saved to `prompts/NNNN.json`, captured via httpx event hooks on the underlying HTTP client.
 
+## SPA
+
+**Source:** `src/calipso/static/index.html`
+
+A single-page htmx application served by the dashboard server. Uses the htmx WebSocket extension to connect to `/ws`. The layout has a sidebar (SystemPrompt, AgentsMd, Goal, TaskList) and a main area (ConversationLog) with an input bar. Widget HTML is swapped in place by element ID using `hx-swap-oob`. A thinking indicator with animated dots appears during turns while the input is disabled.
+
 ## Widgets
 
-Everything in the agent's context is a widget — an Elm-inspired component with state, view functions (generators yielding messages or tool definitions), and update handlers. Widgets compose via `yield from`.
+Everything in the agent's context is a widget — an Elm-inspired component with state, view functions (generators yielding messages or tool definitions, plus HTML for the browser dashboard), and update handlers. Widgets compose via `yield from`. Each widget also has a `widget_id()` (stable kebab-case HTML ID) and a `view_html()` method that renders its state as markdown-to-HTML via the shared `render_md()` function.
 
 **Base class:** `src/calipso/widget.py`
 
@@ -39,7 +54,7 @@ Everything in the agent's context is a widget — an Elm-inspired component with
 | **Goal** | `src/calipso/widgets/goal.py` | Current objective text | `set_goal`, `clear_goal` | Goal text as `## Goal` panel |
 | **TaskList** | `src/calipso/widgets/task_list.py` | Tasks with statuses (`pending`, `in_progress`, `done`) | `create_task`, `update_task_status`, `remove_task` | Compact checklist as `## Tasks` panel |
 | **ConversationLog** | `src/calipso/widgets/conversation_log.py` | Turns with segmented messages + protocol state | `action_log_start`, `action_log_end` | Action protocol rules + conversation history; summarized segments render as system messages, unsummarized render full messages |
-| **Context** | `src/calipso/widgets/context.py` | system_prompt + children (state panels) + conversation_log | None | Composes: system prompt first, conversation log second, state panels last (wrapped in `CURRENT STATE` markers), dispatches tool calls |
+| **Context** | `src/calipso/widgets/context.py` | system_prompt + children (state panels) + conversation_log + HTML cache | None | Composes: system prompt first, conversation log second, state panels last (wrapped in `CURRENT STATE` markers), dispatches tool calls, detects changed widgets via `changed_html()` |
 
 ### Planned
 

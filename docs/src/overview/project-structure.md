@@ -3,10 +3,13 @@
 ```
 calipso/
 ├── src/calipso/              # Python package
-│   ├── widget.py             # Widget base class / protocol
+│   ├── widget.py             # Widget base class / protocol + render_md()
 │   ├── runner.py             # Agentic loop (Model.request())
 │   ├── model.py              # Model/provider setup
-│   ├── cli.py                # CLI entry point
+│   ├── server.py             # DashboardServer (aiohttp HTTP + WebSocket)
+│   ├── cli.py                # Async CLI entry point
+│   ├── static/               # Browser SPA assets
+│   │   └── index.html        # htmx dashboard (served by DashboardServer)
 │   └── widgets/              # Widget modules
 │       ├── system_prompt.py  # Identity + workspace framing
 │       ├── agents_md.py      # Behavioral instructions from AGENTS.md
@@ -29,3 +32,5 @@ calipso/
 - **Tests outside the package** — `tests/` is a top-level directory, not inside `src/`. Tests are not shipped with the package.
 - **`widgets/` subdirectory** — each widget lives in its own module under `src/calipso/widgets/`. The `Context` widget (root composition) lives here alongside leaf widgets. `widget.py` at the package root defines the base class.
 - **`runner.py` and `model.py` at the package root** — the runner (agentic loop) and model setup are thin modules that don't warrant their own subdirectory. The runner depends on the Context widget; `model.py` configures the Pydantic AI `Model` instance.
+- **`server.py` at the package root** — the `DashboardServer` (aiohttp) serves the browser SPA and manages WebSocket connections for live widget visualization and user input.
+- **`static/` directory** — contains the single-page htmx application (`index.html`). No build step; htmx and extensions are loaded from CDN.

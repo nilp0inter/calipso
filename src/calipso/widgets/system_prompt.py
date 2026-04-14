@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 
-from calipso.widget import Widget
+from calipso.widget import Widget, render_md
 
 
 @dataclass
@@ -22,3 +22,11 @@ class SystemPrompt(Widget):
 
     def view_messages(self) -> Iterator[ModelMessage]:
         yield ModelRequest(parts=[SystemPromptPart(content=self.text)])
+
+    def view_html(self) -> str:
+        return (
+            f'<div id="{self.widget_id()}" class="widget">'
+            f"<h3>System Prompt</h3>"
+            f"{render_md(self.text)}"
+            f"</div>"
+        )

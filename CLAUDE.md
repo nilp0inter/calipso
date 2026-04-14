@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is Calipso
 
-A context engineering library and AI coding agent where **everything in the context is a widget** — an Elm-inspired component with state, view functions (generators yielding messages or tool definitions via `view_messages()` / `view_tools()`), and update handlers. Uses [Pydantic AI](https://ai.pydantic.dev/)'s `Model` layer for provider-agnostic LLM calls but owns the agentic loop and prompt composition. Widgets compose via `yield from` (List monad join); the root `Context` widget produces the final prompt.
+A context engineering library and AI coding agent where **everything in the context is a widget** — an Elm-inspired component with state, view functions (generators yielding messages or tool definitions via `view_messages()` / `view_tools()`, plus HTML via `view_html()`), and update handlers. Uses [Pydantic AI](https://ai.pydantic.dev/)'s `Model` layer for provider-agnostic LLM calls but owns the agentic loop and prompt composition. Widgets compose via `yield from` (List monad join); the root `Context` widget produces the final prompt. A live browser dashboard (htmx SPA over WebSocket) visualizes widget state in real time and serves as the user input channel.
 
 ## Commands
 
@@ -29,9 +29,11 @@ uv run pytest tests/test_widgets.py::TestConversationLog
 ## Architecture
 
 - **Model setup** (`src/calipso/model.py`): configures the Pydantic AI `Model` instance (OpenRouter provider). No `Agent` — we call `Model.request()` directly.
-- **Runner** (`src/calipso/runner.py`): thin agentic loop. Materializes context views, calls `Model.request()`, dispatches tool calls.
-- **CLI** (`src/calipso/cli.py`): REPL entry point. Creates model, assembles widget tree into a `Context`, runs the turn loop. Registered as `calipso` console script.
-- **Widgets** (`src/calipso/widgets/`): composable units that render into the model's context. They are "widgets" (Elm Architecture: state/view/update). Each is a `Widget` subclass with `view_messages()`, `view_tools()`, and `update()`. The root `Context` widget composes all children via `yield from`.
+- **Runner** (`src/calipso/runner.py`): thin agentic loop. Materializes context views, calls `Model.request()`, dispatches tool calls. Accepts an `on_update` callback for pushing live updates.
+- **Dashboard server** (`src/calipso/server.py`): aiohttp HTTP + WebSocket server. Serves the htmx SPA at `/`, pushes per-widget HTML diffs via `hx-swap-oob` over WebSocket, receives user input.
+- **SPA** (`src/calipso/static/index.html`): htmx single-page app with WebSocket extension. Sidebar for state widgets, main area for conversation, input bar. No build step.
+- **CLI** (`src/calipso/cli.py`): async entry point. Creates model, assembles widget tree, starts `DashboardServer`, reads input from WebSocket queue. Registered as `calipso` console script.
+- **Widgets** (`src/calipso/widgets/`): composable units that render into the model's context and the browser. Each is a `Widget` subclass with `view_messages()`, `view_tools()`, `view_html()`, and `update()`. HTML is rendered via `render_md()` (markdown to safe HTML). The root `Context` widget composes all children via `yield from` and tracks HTML changes via `changed_html()`.
 
 ## Testing conventions
 

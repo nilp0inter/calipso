@@ -1,12 +1,14 @@
 """CLI entry point for Calipso."""
 
+import asyncio
 import json
 from pathlib import Path
 
 import httpx
 
 from calipso.model import create_http_client, create_model
-from calipso.runner import run_turn_sync
+from calipso.runner import run_turn
+from calipso.server import DashboardServer
 from calipso.widgets import (
     AgentsMd,
     Context,
@@ -61,7 +63,7 @@ class WireCapture:
         self._pending_request = None
 
 
-def main():
+async def async_main():
     PROMPT_DIR.mkdir(exist_ok=True)
     turn_num = _next_num()
 
@@ -82,21 +84,29 @@ def main():
         conversation_log=ConversationLog(),
     )
 
-    while True:
-        try:
-            user_input = input("You: ")
-        except (KeyboardInterrupt, EOFError):
-            print()
-            break
+    server = DashboardServer(context)
+    await server.start()
+    print(f"Dashboard running at http://{server.host}:{server.port}")
 
-        if not user_input.strip():
-            continue
+    while True:
+        user_input = await server.input_queue.get()
 
         capture.exchanges.clear()
-        output = run_turn_sync(model, context, user_input)
+        await server.push_turn_start()
+        output = await run_turn(
+            model, context, user_input, on_update=server.push_updates
+        )
 
         out = PROMPT_DIR / f"{turn_num:04d}.json"
         out.write_text(json.dumps(capture.exchanges, indent=2))
         turn_num += 1
 
+        # Final push to ensure the text response is reflected
+        await server.push_updates()
+        await server.push_turn_end()
+
         print(f"Calipso: {output}")
+
+
+def main():
+    asyncio.run(async_main())

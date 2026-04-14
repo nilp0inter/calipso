@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 from pydantic_ai.tools import ToolDefinition
 
-from calipso.widget import Widget
+from calipso.widget import Widget, render_md
 
 
 @dataclass
@@ -18,7 +18,11 @@ class Goal(Widget):
         self._tool_defs = [
             ToolDefinition(
                 name="set_goal",
-                description="Set or update the current goal.",
+                description=(
+                    "Set the overall goal for the conversation. "
+                    "Use once at the start to establish the objective. "
+                    "Do not change it mid-conversation."
+                ),
                 parameters_json_schema={
                     "type": "object",
                     "properties": {
@@ -32,7 +36,7 @@ class Goal(Widget):
             ),
             ToolDefinition(
                 name="clear_goal",
-                description="Clear the current goal.",
+                description=("Clear the goal only after it has been fully fulfilled."),
                 parameters_json_schema={"type": "object", "properties": {}},
             ),
         ]
@@ -46,6 +50,15 @@ class Goal(Widget):
 
     def view_tools(self) -> Iterator[ToolDefinition]:
         yield from self._tool_defs
+
+    def view_html(self) -> str:
+        if self.text is None:
+            content = "<em>No goal set</em>"
+        else:
+            content = render_md(self.text)
+        return (
+            f'<div id="{self.widget_id()}" class="widget"><h3>Goal</h3>{content}</div>'
+        )
 
     def update(self, tool_name: str, args: dict) -> str:
         if tool_name == "set_goal":

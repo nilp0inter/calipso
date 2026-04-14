@@ -4,8 +4,9 @@ Calipso is a context engineering library and CLI agent. It uses Pydantic AI's `M
 
 ```mermaid
 flowchart LR
-    User((User)) <--> CLI["CLI\n(calipso)"]
-    CLI <--> Runner["Runner"]
+    User((User)) <--> Browser["Browser\n(htmx SPA)"]
+    Browser <--> |WebSocket| Server["DashboardServer\n(aiohttp)"]
+    Server <--> Runner["Runner"]
     Runner <--> Model["Pydantic AI\nModel"]
     Model <--> LLM["LLM\n(via OpenRouter)"]
 ```
@@ -32,10 +33,10 @@ flowchart TB
 Each widget:
 
 - **Holds state** as dataclass fields
-- **Renders via view functions** — generators yielding messages (`view_messages()`) or tool definitions (`view_tools()`)
+- **Renders via view functions** — generators yielding messages (`view_messages()`), tool definitions (`view_tools()`), or HTML (`view_html()`)
 - **Handles updates** — tool calls dispatched by the Context mutate widget state
 
-Tools are not a separate concept — they are just another view (`view_tools() -> Iterator[ToolDefinition]`), composed the same way as messages. Compaction is a view decision: the widget always has full state, but the view decides what to show (expanded vs collapsed).
+Tools are not a separate concept — they are just another view (`view_tools() -> Iterator[ToolDefinition]`), composed the same way as messages. HTML is a third view: `view_html()` renders the widget as a browser panel, pushed to connected clients via WebSocket after every state mutation. Compaction is a view decision: the widget always has full state, but each view decides what to show.
 
 ## The Runner
 
@@ -44,10 +45,19 @@ The runner is a thin agentic loop that only talks to the Context:
 1. Materialize `context.view_messages()` and `context.view_tools()`
 2. Call `Model.request()` with the composed prompt
 3. Pass the response to `context.handle_response()` which dispatches tool calls to owning widgets
-4. Loop while the model makes tool calls; return text when done
+4. If an `on_update` callback is provided, call it after every state mutation (used by the dashboard to push HTML)
+5. Loop while the model makes tool calls; return text when done
+
+## Browser Dashboard
+
+The agent runs a live browser dashboard alongside the agentic loop. A `DashboardServer` (aiohttp) serves an htmx SPA and maintains WebSocket connections. After every widget state change, the Context computes which widgets' `view_html()` output changed (via string comparison against a cache) and the server pushes only the changed HTML fragments using htmx's out-of-band swap mechanism (`hx-swap-oob`). Each widget has a stable HTML element ID derived from its class name.
+
+The browser is also the input channel — user messages are sent via WebSocket and enqueued for the runner. During a turn, the dashboard shows a thinking indicator and disables the input.
+
+All widget HTML output is rendered through a shared `render_md()` function that converts markdown to safe HTML (raw HTML in input is escaped before markdown processing).
 
 ## Current state
 
-The agent has a CLI entry point and five widgets: `SystemPrompt` (static identity/framing text), `AgentsMd` (behavioral instructions loaded from `AGENTS.md`), `Goal` (directional — set/clear), `TaskList` (organizational — CRUD), and `ConversationLog` (manages user/assistant turns partitioned into segments with action log protocol enforcement — summarized segments render a model-provided summary, unsummarized segments render full messages).
+The agent has five widgets: `SystemPrompt` (static identity/framing text), `AgentsMd` (behavioral instructions loaded from `AGENTS.md`), `Goal` (directional — set/clear), `TaskList` (organizational — CRUD with HTML checkboxes), and `ConversationLog` (manages user/assistant turns partitioned into segments with action log protocol enforcement — summarized segments render a model-provided summary, unsummarized segments render full messages).
 
 The Context renders in a specific order: system prompt first, then conversation history, then state panels (wrapped in `CURRENT STATE` / `END STATE` markers) so the model sees live state right before generating its response.

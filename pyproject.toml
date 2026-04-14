@@ -5,6 +5,8 @@ description = "An AI coding agent that uses interactive widgets as tools, manipu
 requires-python = ">=3.12"
 dependencies = [
     "pydantic-ai",
+    "aiohttp>=3.9",
+    "markdown>=3.6",
 ]
 
 [project.scripts]

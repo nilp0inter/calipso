@@ -1,5 +1,6 @@
 """TaskList widget — tracks tasks with statuses."""
 
+import html as html_mod
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -100,6 +101,32 @@ class TaskList(Widget):
 
     def view_tools(self) -> Iterator[ToolDefinition]:
         yield from self._tool_defs
+
+    def view_html(self) -> str:
+        if not self.tasks:
+            items = "<p><em>No tasks</em></p>"
+        else:
+            lines = []
+            for task in self.tasks:
+                checked = " checked" if task.status == TaskStatus.DONE else ""
+                indeterminate = (
+                    " data-indeterminate"
+                    if task.status == TaskStatus.IN_PROGRESS
+                    else ""
+                )
+                desc = html_mod.escape(task.description)
+                lines.append(
+                    f'<li class="task-{task.status}">'
+                    f"<label>"
+                    f'<input type="checkbox" disabled{checked}{indeterminate}>'
+                    f" {desc}"
+                    f"</label>"
+                    f"</li>"
+                )
+            items = "<ul>" + "".join(lines) + "</ul>"
+        return (
+            f'<div id="{self.widget_id()}" class="widget"><h3>Tasks</h3>{items}</div>'
+        )
 
     def update(self, tool_name: str, args: dict) -> str:
         if tool_name == "create_task":

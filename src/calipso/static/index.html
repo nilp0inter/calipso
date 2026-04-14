@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calipso Dashboard</title>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <script src="https://unpkg.com/htmx-ext-ws@2.0.3/ws.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            display: grid;
+            grid-template-columns: 320px 1fr;
+            grid-template-rows: 1fr auto;
+            height: 100vh;
+            background: #f5f5f5;
+            color: #1a1a1a;
+        }
+        #sidebar {
+            grid-row: 1 / 3;
+            overflow-y: auto;
+            padding: 1rem;
+            border-right: 1px solid #ddd;
+            background: #fff;
+        }
+        #main {
+            overflow-y: auto;
+            padding: 1rem;
+        }
+        #input-area {
+            grid-column: 2;
+            padding: 1rem;
+            border-top: 1px solid #ddd;
+            background: #fff;
+        }
+        #input-area form,
+        #input-area fieldset {
+            display: flex;
+            gap: 0.5rem;
+        }
+        #input-area input[type="text"] {
+            flex: 1;
+            padding: 0.5rem 0.75rem;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 0.95rem;
+        }
+        #input-area button {
+            padding: 0.5rem 1.25rem;
+            border: none;
+            border-radius: 6px;
+            background: #2563eb;
+            color: #fff;
+            font-size: 0.95rem;
+            cursor: pointer;
+        }
+        #input-area button:hover { background: #1d4ed8; }
+        .widget {
+            margin-bottom: 1rem;
+            padding: 0.75rem;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            background: #fff;
+        }
+        .widget h3 {
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #666;
+            margin-bottom: 0.5rem;
+        }
+        .widget pre {
+            white-space: pre-wrap;
+            font-size: 0.85rem;
+            color: #444;
+        }
+        .widget ul { list-style: none; padding: 0; }
+        .widget li { padding: 0.25rem 0; font-size: 0.9rem; }
+        .task-done label { text-decoration: line-through; color: #999; }
+        .task-in_progress label { color: #b45309; }
+        .msg { padding: 0.4rem 0; font-size: 0.9rem; }
+        .msg.user { color: #2563eb; }
+        .msg.assistant { color: #1a1a1a; }
+        .msg.summary { color: #666; font-style: italic; font-size: 0.85rem; }
+        .widget p { margin: 0.25rem 0; }
+        .widget pre {
+            background: #f0f0f0;
+            padding: 0.5rem;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        .widget code {
+            font-size: 0.85rem;
+            background: #f0f0f0;
+            padding: 0.1rem 0.3rem;
+            border-radius: 3px;
+        }
+        .widget pre code { background: none; padding: 0; }
+        .widget ul, .widget ol { padding-left: 1.5rem; }
+        .widget table {
+            border-collapse: collapse;
+            margin: 0.5rem 0;
+        }
+        .widget th, .widget td {
+            border: 1px solid #ddd;
+            padding: 0.3rem 0.5rem;
+            font-size: 0.85rem;
+        }
+        .msg.tool-call code, .msg.tool-result code {
+            font-size: 0.8rem;
+            color: #888;
+        }
+        #thinking {
+            display: none;
+            padding: 0.5rem 0.75rem;
+            font-size: 0.85rem;
+            color: #666;
+        }
+        #thinking.active {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
+        #thinking .dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: #2563eb;
+            animation: pulse 1.2s ease-in-out infinite;
+        }
+        #thinking .dot:nth-child(2) { animation-delay: 0.2s; }
+        #thinking .dot:nth-child(3) { animation-delay: 0.4s; }
+        #input-area fieldset {
+            border: none;
+            padding: 0;
+            margin: 0;
+        }
+        #input-area fieldset:disabled input,
+        #input-area fieldset:disabled button {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body hx-ext="ws" ws-connect="/ws">
+    <div id="sidebar">
+        <div id="widget-system-prompt" class="widget"><h3>System Prompt</h3></div>
+        <div id="widget-agents-md" class="widget"><h3>AGENTS.md</h3></div>
+        <div id="widget-goal" class="widget"><h3>Goal</h3></div>
+        <div id="widget-task-list" class="widget"><h3>Tasks</h3></div>
+    </div>
+    <div id="main">
+        <div id="widget-conversation-log" class="widget"><h3>Conversation</h3></div>
+        <div id="thinking">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            <span>Thinking...</span>
+        </div>
+    </div>
+    <div id="input-area">
+        <form ws-send>
+            <fieldset id="input-fieldset">
+                <input type="text" name="user_input" placeholder="Type a message..." autocomplete="off" />
+                <button type="submit">Send</button>
+            </fieldset>
+        </form>
+    </div>
+    <script>
+        function setIndeterminate() {
+            document.querySelectorAll('[data-indeterminate]').forEach(function(cb) {
+                cb.indeterminate = true;
+            });
+        }
+        document.body.addEventListener('htmx:oobAfterSwap', setIndeterminate);
+        document.body.addEventListener('htmx:wsAfterMessage', setIndeterminate);
+    </script>
+</body>
+</html>

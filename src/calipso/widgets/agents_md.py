@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 
-from calipso.widget import Widget
+from calipso.widget import Widget, render_md
 
 
 @dataclass
@@ -20,3 +20,17 @@ class AgentsMd(Widget):
             return
         if text.strip():
             yield ModelRequest(parts=[SystemPromptPart(content=text)])
+
+    def view_html(self) -> str:
+        try:
+            text = self.path.read_text()
+        except FileNotFoundError:
+            text = ""
+        if text.strip():
+            content = render_md(text)
+        else:
+            content = "<em>Not found</em>"
+        return (
+            f'<div id="{self.widget_id()}" class="widget">'
+            f"<h3>AGENTS.md</h3>{content}</div>"
+        )

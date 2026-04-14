@@ -42,6 +42,7 @@ class Context(Widget):
     _tool_owners: dict[str, Widget] = field(
         init=False, repr=False, default_factory=dict
     )
+    _html_cache: dict[str, str] = field(init=False, repr=False, default_factory=dict)
 
     def __post_init__(self) -> None:
         self._rebuild_tool_owners()
@@ -68,6 +69,27 @@ class Context(Widget):
     def view_tools(self) -> Iterator[ToolDefinition]:
         for widget in self._all_widgets():
             yield from widget.view_tools()
+
+    def changed_html(self) -> list[str]:
+        """Return HTML fragments for widgets whose view_html() changed."""
+        changed = []
+        for widget in self._all_widgets():
+            wid = widget.widget_id()
+            current = widget.view_html()
+            if self._html_cache.get(wid) != current:
+                self._html_cache[wid] = current
+                changed.append(current)
+        return changed
+
+    def all_html(self) -> list[str]:
+        """Return HTML for all widgets (for initial page load)."""
+        result = []
+        for widget in self._all_widgets():
+            wid = widget.widget_id()
+            html = widget.view_html()
+            self._html_cache[wid] = html
+            result.append(html)
+        return result
 
     def add_user_message(self, text: str) -> None:
         self.conversation_log.add_user_message(text)

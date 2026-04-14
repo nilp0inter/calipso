@@ -7,6 +7,7 @@ messages. This prevents replaying raw tool call/result messages for completed
 actions.
 """
 
+import html as html_mod
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
@@ -15,11 +16,14 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     SystemPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.tools import ToolDefinition
 
-from calipso.widget import Widget
+from calipso.widget import Widget, render_md
 
 
 @dataclass
@@ -128,6 +132,60 @@ class ConversationLog(Widget):
 
     def view_tools(self) -> Iterator[ToolDefinition]:
         yield from self._tool_defs
+
+    def view_html(self) -> str:
+        if not self.turns:
+            content = "<p><em>No messages yet</em></p>"
+        else:
+            parts = []
+            for turn in self.turns:
+                user_html = render_md(turn.user_message)
+                parts.append(
+                    f'<div class="msg user"><strong>You:</strong> {user_html}</div>'
+                )
+                for segment in turn.segments:
+                    if segment.summary is not None:
+                        parts.append(
+                            f'<div class="msg summary">'
+                            f"{html_mod.escape(segment.summary)}</div>"
+                        )
+                    else:
+                        for msg in segment.messages:
+                            parts.extend(self._render_message(msg))
+            content = "".join(parts)
+        return (
+            f'<div id="{self.widget_id()}" class="widget">'
+            f"<h3>Conversation</h3>{content}</div>"
+        )
+
+    @staticmethod
+    def _render_message(msg: ModelMessage) -> list[str]:
+        parts: list[str] = []
+        if isinstance(msg, ModelResponse):
+            for part in msg.parts:
+                if isinstance(part, TextPart):
+                    rendered = render_md(part.content)
+                    parts.append(
+                        f'<div class="msg assistant">'
+                        f"<strong>Calipso:</strong> {rendered}"
+                        f"</div>"
+                    )
+                elif isinstance(part, ToolCallPart):
+                    args = html_mod.escape(str(part.args_as_dict()))
+                    parts.append(
+                        f'<div class="msg tool-call">'
+                        f"<code>{html_mod.escape(part.tool_name)}({args})</code>"
+                        f"</div>"
+                    )
+        elif isinstance(msg, ModelRequest):
+            for part in msg.parts:
+                if isinstance(part, ToolReturnPart):
+                    parts.append(
+                        f'<div class="msg tool-result">'
+                        f"<code>→ {html_mod.escape(str(part.content))}</code>"
+                        f"</div>"
+                    )
+        return parts
 
     def check_protocol(self, tool_name: str) -> str | None:
         """Check if a tool call is allowed under the action log protocol.

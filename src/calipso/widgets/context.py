@@ -11,8 +11,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.tools import ToolDefinition
 
 from calipso.widget import Widget
-from calipso.widgets.action_log import ActionLog
-from calipso.widgets.conversation import Conversation
+from calipso.widgets.conversation_log import ConversationLog, Segment
 
 
 @dataclass
@@ -27,8 +26,7 @@ class Context(Widget):
     """
 
     children: list[Widget] = field(default_factory=list)
-    conversation: Conversation = field(default_factory=Conversation)
-    action_log: ActionLog | None = field(default=None, repr=False)
+    conversation_log: ConversationLog = field(default_factory=ConversationLog)
     _tool_owners: dict[str, Widget] = field(
         init=False, repr=False, default_factory=dict
     )
@@ -44,30 +42,33 @@ class Context(Widget):
 
     def _all_widgets(self) -> Iterator[Widget]:
         yield from self.children
-        if self.action_log is not None:
-            yield self.action_log
-        yield self.conversation
+        yield self.conversation_log
 
     def view_messages(self) -> Iterator[ModelMessage]:
         for widget in self.children:
             yield from widget.view_messages()
-        if self.action_log is not None:
-            yield from self.action_log.view_messages()
-        yield from self.conversation.view_messages()
+        yield from self.conversation_log.view_messages()
 
     def view_tools(self) -> Iterator[ToolDefinition]:
         for widget in self._all_widgets():
             yield from widget.view_tools()
 
     def add_user_message(self, text: str) -> None:
-        self.conversation.add_user_message(text)
+        self.conversation_log.add_user_message(text)
 
-    def handle_response(self, response: ModelResponse) -> list[tuple[str, str]]:
+    def handle_response(
+        self, response: ModelResponse
+    ) -> tuple[list[tuple[str, str]], Segment]:
         """Process a model response, dispatch tool calls, return tool results.
 
-        Returns a list of (tool_call_id, result_text) pairs for tool calls,
-        or an empty list if the response was text-only.
+        Returns (tool_results, segment) where tool_results is a list of
+        (tool_call_id, result_text) pairs and segment is the pinned segment
+        that the response and tool results should be recorded in.
         """
+        # Pin the segment before dispatch — action_log_start/end may change
+        # the current segment, but response and tool results belong together.
+        segment = self.conversation_log._current_segment()
+
         tool_results: list[tuple[str, str]] = []
 
         for part in response.parts:
@@ -77,12 +78,11 @@ class Context(Widget):
             name = part.tool_name
             args = part.args_as_dict()
 
-            # Protocol enforcement via action log
-            if self.action_log is not None:
-                error = self.action_log.check_protocol(name)
-                if error is not None:
-                    tool_results.append((part.tool_call_id, error))
-                    continue
+            # Protocol enforcement
+            error = self.conversation_log.check_protocol(name)
+            if error is not None:
+                tool_results.append((part.tool_call_id, error))
+                continue
 
             # Dispatch to owning widget
             owner = self._tool_owners.get(name)
@@ -94,10 +94,10 @@ class Context(Widget):
             tool_results.append((part.tool_call_id, result))
 
             # Track non-action-log tools for protocol enforcement
-            if self.action_log is not None and owner is not self.action_log:
-                self.action_log.track_tool(name)
+            if owner is not self.conversation_log:
+                self.conversation_log.track_tool(name)
 
-        # Record the response in conversation
-        self.conversation.add_response(response)
+        # Record the response in the pinned segment
+        self.conversation_log.add_response(response, segment)
 
-        return tool_results
+        return tool_results, segment

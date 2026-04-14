@@ -8,9 +8,8 @@ import httpx
 from calipso.model import create_http_client, create_model
 from calipso.runner import run_turn_sync
 from calipso.widgets import (
-    ActionLog,
     Context,
-    Conversation,
+    ConversationLog,
     Goal,
     SystemPrompt,
     TaskList,
@@ -78,8 +77,7 @@ def main():
             Goal(),
             TaskList(),
         ],
-        conversation=Conversation(),
-        action_log=ActionLog(),
+        conversation_log=ConversationLog(),
     )
 
     while True:

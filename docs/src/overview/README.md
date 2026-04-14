@@ -47,4 +47,4 @@ The runner is a thin agentic loop that only talks to the Context:
 
 ## Current state
 
-The agent has a CLI entry point and five widgets: `SystemPrompt` (static text), `Goal` (directional — set/clear), `TaskList` (organizational — CRUD), `ActionLog` (protocol enforcement with collapsed summaries), and `Conversation` (manages user/assistant turns with compaction).
+The agent has a CLI entry point and four widgets: `SystemPrompt` (static text), `Goal` (directional — set/clear), `TaskList` (organizational — CRUD), and `ConversationLog` (manages user/assistant turns partitioned into segments with action log protocol enforcement — summarized segments render a model-provided summary, unsummarized segments render full messages).

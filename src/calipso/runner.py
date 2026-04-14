@@ -23,13 +23,13 @@ async def run_turn(model: Model, context: Context, user_input: str) -> str:
 
         response = await model.request(messages, None, params)
 
-        tool_results = context.handle_response(response)
+        tool_results, segment = context.handle_response(response)
 
         if not tool_results:
             # No tool calls — the model produced a text response
             return response.text or ""
 
-        # Build tool return message and record it in conversation
+        # Build tool return message and record it in the same segment
         tool_return_parts = [
             ToolReturnPart(
                 tool_name=_find_tool_name(response, call_id),
@@ -39,7 +39,7 @@ async def run_turn(model: Model, context: Context, user_input: str) -> str:
             for call_id, result in tool_results
         ]
         tool_request = ModelRequest(parts=tool_return_parts)
-        context.conversation.add_tool_results(tool_request)
+        context.conversation_log.add_tool_results(tool_request, segment)
 
 
 def run_turn_sync(model: Model, context: Context, user_input: str) -> str:

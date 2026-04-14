@@ -5,9 +5,11 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     SystemPromptPart,
+    TextPart,
+    UserPromptPart,
 )
 
-from calipso.widgets.action_log import ActionLog, LogEntry
+from calipso.widgets.conversation_log import ConversationLog
 from calipso.widgets.goal import Goal
 from calipso.widgets.system_prompt import SystemPrompt
 from calipso.widgets.task_list import TaskList, TaskStatus
@@ -115,50 +117,115 @@ class TestTaskList:
         assert names == {"create_task", "update_task_status", "remove_task"}
 
 
-# --- ActionLog ---
+# --- ConversationLog ---
 
 
-class TestActionLog:
+class TestConversationLog:
     def test_view_messages_empty(self):
-        w = ActionLog()
+        w = ConversationLog()
         msgs = list(w.view_messages())
         # Should have the rules as a system prompt
         assert len(msgs) == 1
         assert "Action Log" in msgs[0].parts[0].content
 
-    def test_view_messages_with_entries(self):
-        w = ActionLog(entries=[LogEntry(id=1, action="Read file", result="Done")])
-        msgs = list(w.view_messages())
-        assert len(msgs) == 2  # rules + 1 entry
-        assert isinstance(msgs[1], ModelResponse)
-        assert "Read file" in msgs[1].parts[0].content
+    def test_add_user_message_creates_turn(self):
+        w = ConversationLog()
+        w.add_user_message("Hello")
+        assert len(w.turns) == 1
+        assert w.turns[0].user_message == "Hello"
+        assert len(w.turns[0].segments) == 1
 
-    def test_protocol_start_end(self):
-        w = ActionLog()
-        w.update("action_log_start", {"description": "Read file"})
-        assert w._active_action == "Read file"
-        result = w.update("action_log_end", {"result": "File read OK"})
-        assert "logged" in result.lower()
-        assert len(w.entries) == 1
+    def test_view_messages_renders_user_message(self):
+        w = ConversationLog()
+        w.add_user_message("Hello")
+        msgs = list(w.view_messages())
+        user_msgs = [
+            m
+            for m in msgs
+            if isinstance(m, ModelRequest)
+            and any(isinstance(p, UserPromptPart) for p in m.parts)
+        ]
+        assert len(user_msgs) == 1
+        assert user_msgs[0].parts[0].content == "Hello"
+
+    def test_unsummarized_segment_renders_full_messages(self):
+        w = ConversationLog()
+        w.add_user_message("Hello")
+        response = ModelResponse(parts=[TextPart(content="Hi back!")])
+        w.add_response(response, w._current_segment())
+        msgs = list(w.view_messages())
+        assert response in msgs
+
+    def test_action_start_records_active_action(self):
+        w = ConversationLog()
+        w.add_user_message("Do something")
+        assert len(w.turns[0].segments) == 1
+        w.update("action_log_start", {"description": "Do the thing"})
+        # action_log_start does NOT create a new segment
+        assert len(w.turns[0].segments) == 1
+        assert w._active_action == "Do the thing"
+
+    def test_action_end_summarizes_and_creates_new_segment(self):
+        w = ConversationLog()
+        w.add_user_message("Do something")
+        w.update("action_log_start", {"description": "Do the thing"})
+        # Simulate some messages in the action segment
+        seg = w._current_segment()
+        w.add_response(ModelResponse(parts=[TextPart(content="working...")]), seg)
+        w.update("action_log_end", {"result": "Thing was done successfully"})
+        # The current segment (Seg0) should be summarized
+        assert "Thing was done successfully" in w.turns[0].segments[0].summary
+        # A new segment should exist for subsequent messages
+        assert len(w.turns[0].segments) == 2
         assert w._active_action is None
 
+    def test_summarized_segment_renders_summary_not_messages(self):
+        w = ConversationLog()
+        w.add_user_message("Do something")
+        w.update("action_log_start", {"description": "Do the thing"})
+        seg = w._current_segment()
+        inner_response = ModelResponse(parts=[TextPart(content="working...")])
+        w.add_response(inner_response, seg)
+        w.update("action_log_end", {"result": "Done!"})
+
+        msgs = list(w.view_messages())
+        # The inner response should NOT appear
+        assert inner_response not in msgs
+        # The summary should appear as a ModelResponse
+        summaries = [
+            m
+            for m in msgs
+            if isinstance(m, ModelResponse)
+            and any(isinstance(p, TextPart) and "Done!" in p.content for p in m.parts)
+        ]
+        assert len(summaries) == 1
+
+    def test_view_tools(self):
+        w = ConversationLog()
+        tools = list(w.view_tools())
+        names = {t.name for t in tools}
+        assert names == {"action_log_start", "action_log_end"}
+
+
+class TestConversationLogProtocol:
+    def test_check_protocol_allows_start(self):
+        w = ConversationLog()
+        assert w.check_protocol("action_log_start") is None
+
     def test_check_protocol_no_active_action(self):
-        w = ActionLog()
+        w = ConversationLog()
         error = w.check_protocol("some_tool")
         assert error is not None
         assert "action_log_start" in error
 
-    def test_check_protocol_allows_start(self):
-        w = ActionLog()
-        assert w.check_protocol("action_log_start") is None
-
     def test_check_protocol_end_without_start(self):
-        w = ActionLog()
+        w = ConversationLog()
         error = w.check_protocol("action_log_end")
         assert error is not None
 
     def test_check_protocol_tool_type_lock(self):
-        w = ActionLog()
+        w = ConversationLog()
+        w.add_user_message("test")
         w.update("action_log_start", {"description": "Do stuff"})
         w.track_tool("tool_a")
         assert w.check_protocol("tool_a") is None
@@ -166,8 +233,11 @@ class TestActionLog:
         assert error is not None
         assert "tool_a" in error
 
-    def test_view_tools(self):
-        w = ActionLog()
-        tools = list(w.view_tools())
-        names = {t.name for t in tools}
-        assert names == {"action_log_start", "action_log_end"}
+    def test_protocol_start_then_end(self):
+        w = ConversationLog()
+        w.add_user_message("test")
+        w.update("action_log_start", {"description": "Read file"})
+        assert w._active_action == "Read file"
+        result = w.update("action_log_end", {"result": "File read OK"})
+        assert "logged" in result.lower()
+        assert w._active_action is None

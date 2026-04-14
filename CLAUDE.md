@@ -23,7 +23,7 @@ task docs:serve         # live-reload docs preview
 
 Run a single test:
 ```bash
-uv run pytest tests/test_agent.py::test_agent_responds
+uv run pytest tests/test_widgets.py::TestConversationLog
 ```
 
 ## Architecture

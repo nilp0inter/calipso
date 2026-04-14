@@ -37,8 +37,7 @@ Everything in the agent's context is a widget — an Elm-inspired component with
 | **SystemPrompt** | `src/calipso/widgets/system_prompt.py` | None | None | Static instruction text |
 | **Goal** | `src/calipso/widgets/goal.py` | Current objective text | `set_goal`, `clear_goal` | Goal text in instructions |
 | **TaskList** | `src/calipso/widgets/task_list.py` | Tasks with statuses (`pending`, `in_progress`, `done`) | `create_task`, `update_task_status`, `remove_task` | Compact checklist with status icons |
-| **ActionLog** | `src/calipso/widgets/action_log.py` | Log entries + active action | `action_log_start`, `action_log_end` | Rules in instructions, collapsed entry summaries in history |
-| **Conversation** | `src/calipso/widgets/conversation.py` | Turn pairs + compaction summaries | None (fed by runner) | Recent turns as messages, old turns as compacted summaries |
+| **ConversationLog** | `src/calipso/widgets/conversation_log.py` | Turns with segmented messages + protocol state | `action_log_start`, `action_log_end` | Segments: summarized segments render model-provided summary, unsummarized render full messages |
 | **Context** | `src/calipso/widgets/context.py` | Child widgets | None | Composes all children via `yield from`, dispatches tool calls |
 
 ### Planned

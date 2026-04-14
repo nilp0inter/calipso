@@ -54,5 +54,6 @@ tasks:
   run:
     desc: Run the calipso agent
     deps: [setup]
+    interactive: true
     cmds:
       - uv run calipso

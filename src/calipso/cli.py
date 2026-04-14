@@ -1,7 +1,11 @@
 import json
 from pathlib import Path
+from typing import Any
 
 import httpx
+from pydantic_ai import RunContext
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.messages import ToolCallPart
 
 from calipso.agent import create_agent, create_http_client
 
@@ -38,14 +42,41 @@ class WireCapture:
             body = json.loads(response.content)
         except (json.JSONDecodeError, ValueError):
             body = response.content.decode(errors="replace")
-        self.exchanges.append({
-            "request": self._pending_request,
-            "response": {
-                "status_code": response.status_code,
-                "body": body,
-            },
-        })
+        self.exchanges.append(
+            {
+                "request": self._pending_request,
+                "response": {
+                    "status_code": response.status_code,
+                    "body": body,
+                },
+            }
+        )
         self._pending_request = None
+
+
+def _make_cli_hooks() -> Hooks:
+    hooks = Hooks()
+
+    @hooks.on.after_model_request
+    async def print_tool_calls(ctx, *, request_context, response):
+        for part in response.parts:
+            if isinstance(part, ToolCallPart):
+                print(f"  -> {part.tool_name}({part.args_as_dict()})")
+        return response
+
+    @hooks.on.tool_execute_error
+    async def print_tool_error(
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def,
+        args,
+        error,
+    ):
+        print(f"  !! {call.tool_name}: {error}")
+        raise error
+
+    return hooks
 
 
 def main():
@@ -58,7 +89,9 @@ def main():
         request_hook=capture.on_request,
         response_hook=capture.on_response,
     )
-    agent = create_agent(http_client=http_client)
+    agent = create_agent(
+        http_client=http_client, extra_capabilities=[_make_cli_hooks()]
+    )
 
     while True:
         try:

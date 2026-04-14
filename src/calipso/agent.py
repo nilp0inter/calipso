@@ -4,20 +4,18 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
-
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from calipso.capabilities import Goal, TaskList
+from calipso.capabilities import ActionLog, Goal, TaskList
 
 
 @dataclass
 class SystemPrompt(AbstractCapability[Any]):
     text: str = (
-        "You are Calipso, a friendly AI assistant."
-        " Say hello and introduce yourself briefly."
+        "You are Calipso, an AI coding assistant.\n# Current Status of the World"
     )
 
     def get_instructions(self):
@@ -41,22 +39,29 @@ def create_http_client(
     )
 
 
-def create_agent(http_client: httpx.AsyncClient | None = None) -> Agent:
+def create_agent(
+    http_client: httpx.AsyncClient | None = None,
+    extra_capabilities: list[AbstractCapability[Any]] | None = None,
+) -> Agent:
     """Create the Calipso agent, optionally with a custom httpx client."""
     provider = OpenAIProvider(
         base_url="https://openrouter.ai/api/v1",
         api_key=os.environ.get("OPENROUTER_API_KEY"),
         http_client=http_client,
     )
-    model = OpenAIChatModel("minimax/minimax-m2.7", provider=provider)
+    model = OpenAIChatModel("x-ai/grok-4-fast", provider=provider)
+    capabilities: list[AbstractCapability[Any]] = [
+        SystemPrompt(),
+        ActionLog(),
+        TaskList(),
+        Goal(),
+    ]
+    if extra_capabilities:
+        capabilities.extend(extra_capabilities)
     return Agent(
         model,
         defer_model_check=True,
-        capabilities=[
-            SystemPrompt(),
-            TaskList(),
-            Goal(),
-        ],
+        capabilities=capabilities,
     )
 
 

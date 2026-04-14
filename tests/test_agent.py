@@ -9,6 +9,8 @@ pytestmark = pytest.mark.anyio
 
 
 async def test_agent_responds():
-    with agent.override(model=TestModel(custom_output_text="Hello! I'm Calipso.")):
+    with agent.override(
+        model=TestModel(call_tools=[], custom_output_text="Hello! I'm Calipso.")
+    ):
         result = await agent.run("Hello!")
     assert "Calipso" in result.output

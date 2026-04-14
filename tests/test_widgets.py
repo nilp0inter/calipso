@@ -8,6 +8,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     SystemPromptPart,
     TextPart,
+    ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 
@@ -18,6 +20,17 @@ from calipso.widgets.system_prompt import SystemPrompt
 from calipso.widgets.task_list import TaskList, TaskStatus
 
 models.ALLOW_MODEL_REQUESTS = False
+
+
+# --- Widget base ---
+
+
+class TestWidgetBase:
+    def test_frontend_tools_empty_by_default(self):
+        from calipso.widget import Widget
+
+        w = Widget()
+        assert w.frontend_tools() == set()
 
 
 # --- SystemPrompt ---
@@ -149,6 +162,10 @@ class TestTaskList:
         names = {t.name for t in tools}
         assert names == {"create_task", "update_task_status", "remove_task"}
 
+    def test_frontend_tools(self):
+        w = TaskList()
+        assert w.frontend_tools() == {"update_task_status", "remove_task"}
+
 
 # --- ConversationLog ---
 
@@ -212,19 +229,30 @@ class TestConversationLog:
         assert len(w.turns[0].segments) == 2
         assert w._active_action is None
 
-    def test_summarized_segment_renders_summary_not_messages(self):
+    def test_summarized_segment_renders_summary_and_tool_calls(self):
         w = ConversationLog()
         w.add_user_message("Do something")
         w.update("action_log_start", {"description": "Do the thing"})
         seg = w._current_segment()
-        inner_response = ModelResponse(parts=[TextPart(content="working...")])
+        # Response with both text and a tool call
+        tool_call = ToolCallPart(
+            tool_name="read_file",
+            args={"path": "/tmp/x"},
+            tool_call_id="tc1",
+        )
+        inner_response = ModelResponse(
+            parts=[TextPart(content="working..."), tool_call]
+        )
         w.add_response(inner_response, seg)
+        # Tool return
+        tool_return = ToolReturnPart(
+            tool_name="read_file", content="file contents", tool_call_id="tc1"
+        )
+        w.add_tool_results(ModelRequest(parts=[tool_return]), seg)
         w.update("action_log_end", {"result": "Done!"})
 
         msgs = list(w.view_messages())
-        # The inner response should NOT appear
-        assert inner_response not in msgs
-        # The summary should appear as a system prompt (not assistant message)
+        # The summary should appear as a system prompt
         summaries = [
             m
             for m in msgs
@@ -235,6 +263,39 @@ class TestConversationLog:
             )
         ]
         assert len(summaries) == 1
+        # The original response (with TextPart) should NOT appear as-is
+        assert inner_response not in msgs
+        # But a ModelResponse with the ToolCallPart SHOULD appear
+        tool_call_msgs = [
+            m
+            for m in msgs
+            if isinstance(m, ModelResponse)
+            and any(isinstance(p, ToolCallPart) for p in m.parts)
+        ]
+        assert len(tool_call_msgs) == 1
+        assert tool_call_msgs[0].parts == [tool_call]
+        # And the ToolReturnPart SHOULD appear
+        tool_return_msgs = [
+            m
+            for m in msgs
+            if isinstance(m, ModelRequest)
+            and any(isinstance(p, ToolReturnPart) for p in m.parts)
+        ]
+        assert len(tool_return_msgs) == 1
+
+    def test_summarized_segment_drops_text_parts(self):
+        """Text-only responses in summarized segments are dropped entirely."""
+        w = ConversationLog()
+        w.add_user_message("Do something")
+        w.update("action_log_start", {"description": "Do the thing"})
+        seg = w._current_segment()
+        text_response = ModelResponse(parts=[TextPart(content="thinking...")])
+        w.add_response(text_response, seg)
+        w.update("action_log_end", {"result": "Done!"})
+
+        msgs = list(w.view_messages())
+        # No ModelResponse should appear (text-only response is dropped)
+        assert not any(isinstance(m, ModelResponse) for m in msgs)
 
     def test_view_tools(self):
         w = ConversationLog()

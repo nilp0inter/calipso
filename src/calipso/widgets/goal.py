@@ -3,7 +3,7 @@
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.tools import ToolDefinition
 
 from calipso.widget import Widget, render_md
@@ -46,18 +46,36 @@ class Goal(Widget):
             text = "## Goal\nNo goal set"
         else:
             text = f"## Goal\n{self.text}"
-        yield ModelRequest(parts=[SystemPromptPart(content=text)])
+        yield ModelRequest(parts=[UserPromptPart(content=text)])
 
     def view_tools(self) -> Iterator[ToolDefinition]:
         yield from self._tool_defs
 
     def view_html(self) -> str:
+        import html as html_mod
+
         if self.text is None:
             content = "<em>No goal set</em>"
         else:
             content = render_md(self.text)
+        escaped = html_mod.escape(self.text or "", quote=True)
+        form = (
+            '<div class="goal-edit">'
+            '<input type="text" class="goal-input"'
+            f' value="{escaped}"'
+            " placeholder=\"Set a goal...\""
+            " onkeydown=\"if(event.key==='Enter'){"
+            "sendWidgetEvent('set_goal',"
+            "{goal:this.value});}\""
+            ">"
+            ' <button onclick="'
+            "sendWidgetEvent('clear_goal', {})"
+            '">Clear</button>'
+            "</div>"
+        )
         return (
-            f'<div id="{self.widget_id()}" class="widget"><h3>Goal</h3>{content}</div>'
+            f'<div id="{self.widget_id()}" class="widget">'
+            f"<h3>Goal</h3>{content}{form}</div>"
         )
 
     def update(self, tool_name: str, args: dict) -> str:
@@ -68,3 +86,6 @@ class Goal(Widget):
             self.text = None
             return "Goal cleared"
         raise NotImplementedError(f"Goal does not handle tool '{tool_name}'")
+
+    def frontend_tools(self) -> set[str]:
+        return {"set_goal", "clear_goal"}

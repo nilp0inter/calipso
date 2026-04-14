@@ -23,7 +23,7 @@ The agentic loop. Takes a `Model` and a `Context` widget, then:
 
 An aiohttp HTTP + WebSocket server that provides a live browser dashboard. Serves the SPA at `/` and accepts WebSocket connections at `/ws`. On connection, sends all widget HTML. After every state mutation, pushes only changed widget fragments via htmx out-of-band swaps. Also handles turn lifecycle signals (thinking indicator, input disabling).
 
-User input arrives over the WebSocket and is enqueued in an `asyncio.Queue` consumed by the CLI's main loop.
+The server handles two types of inbound WebSocket messages: `user_input` (enqueued for the runner's main loop) and `widget_event` (dispatched directly to the target widget's `update()` method via `Context.handle_widget_event()`, bypassing the LLM and action log protocol). After a widget event, changed HTML is pushed immediately.
 
 ## CLI
 
@@ -37,11 +37,11 @@ Each turn's raw HTTP request/response payloads are saved to `prompts/NNNN.json`,
 
 **Source:** `src/calipso/static/index.html`
 
-A single-page htmx application served by the dashboard server. Uses the htmx WebSocket extension to connect to `/ws`. The layout has a sidebar (SystemPrompt, AgentsMd, Goal, TaskList) and a main area (ConversationLog) with an input bar. Widget HTML is swapped in place by element ID using `hx-swap-oob`. A thinking indicator with animated dots appears during turns while the input is disabled.
+A single-page htmx application served by the dashboard server. Uses the htmx WebSocket extension to connect to `/ws`. The layout has a sidebar (SystemPrompt, AgentsMd, Goal, TaskList) and a main area (ConversationLog) with an input bar. Widget HTML is swapped in place by element ID using `hx-swap-oob`. A thinking indicator with animated dots appears during turns while the input is disabled. A global `sendWidgetEvent(toolName, args)` JS function sends `widget_event` messages over the WebSocket, allowing widgets to render interactive HTML (buttons, checkboxes, inputs) that trigger their own updates without an LLM round-trip.
 
 ## Widgets
 
-Everything in the agent's context is a widget — an Elm-inspired component with state, view functions (generators yielding messages or tool definitions, plus HTML for the browser dashboard), and update handlers. Widgets compose via `yield from`. Each widget also has a `widget_id()` (stable kebab-case HTML ID) and a `view_html()` method that renders its state as markdown-to-HTML via the shared `render_md()` function.
+Everything in the agent's context is a widget — an Elm-inspired component with state, view functions (generators yielding messages or tool definitions, plus HTML for the browser dashboard), and update handlers. Widgets compose via `yield from`. Each widget also has a `widget_id()` (stable kebab-case HTML ID), a `view_html()` method that renders its state as markdown-to-HTML via the shared `render_md()` function, and an optional `frontend_tools()` method that declares which tools can be invoked directly from the browser (default: none).
 
 **Base class:** `src/calipso/widget.py`
 
@@ -51,10 +51,12 @@ Everything in the agent's context is a widget — an Elm-inspired component with
 |---|---|---|---|---|
 | **SystemPrompt** | `src/calipso/widgets/system_prompt.py` | None | None | Identity and workspace framing text |
 | **AgentsMd** | `src/calipso/widgets/agents_md.py` | None | None | Behavioral instructions loaded from `AGENTS.md` on disk (silently skipped if missing) |
-| **Goal** | `src/calipso/widgets/goal.py` | Current objective text | `set_goal`, `clear_goal` | Goal text as `## Goal` panel |
-| **TaskList** | `src/calipso/widgets/task_list.py` | Tasks with statuses (`pending`, `in_progress`, `done`) | `create_task`, `update_task_status`, `remove_task` | Compact checklist as `## Tasks` panel |
-| **ConversationLog** | `src/calipso/widgets/conversation_log.py` | Turns with segmented messages + protocol state | `action_log_start`, `action_log_end` | Action protocol rules + conversation history; summarized segments render as system messages, unsummarized render full messages |
-| **Context** | `src/calipso/widgets/context.py` | system_prompt + children (state panels) + conversation_log + HTML cache | None | Composes: system prompt first, conversation log second, state panels last (wrapped in `CURRENT STATE` markers), dispatches tool calls, detects changed widgets via `changed_html()` |
+| **Goal** | `src/calipso/widgets/goal.py` | Current objective text | `set_goal`, `clear_goal` (both frontend-callable) | Goal text as `## Goal` panel with inline edit input and clear button |
+| **TaskList** | `src/calipso/widgets/task_list.py` | Tasks with statuses (`pending`, `in_progress`, `done`) | `create_task`, `update_task_status`\*, `remove_task`\* | Compact checklist as `## Tasks` panel with interactive checkboxes and remove buttons |
+| **ConversationLog** | `src/calipso/widgets/conversation_log.py` | Turns with segmented messages + protocol state | `action_log_start`, `action_log_end` | Action protocol rules + conversation history; summarized segments render summary + tool call/return messages, unsummarized render full messages |
+| **Context** | `src/calipso/widgets/context.py` | system_prompt + children (state panels) + conversation_log + HTML cache | None | Composes: system prompt first, conversation log second, state panels last (wrapped in `CURRENT STATE` markers as user messages), dispatches tool calls and frontend widget events, detects changed widgets via `changed_html()` |
+
+\* = frontend-callable (invocable from the browser without LLM involvement)
 
 ### Planned
 

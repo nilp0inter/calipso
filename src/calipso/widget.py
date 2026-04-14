@@ -70,3 +70,7 @@ class Widget:
         raise NotImplementedError(
             f"{type(self).__name__} does not handle tool '{tool_name}'"
         )
+
+    def frontend_tools(self) -> set[str]:
+        """Tool names callable from the browser. Default: none."""
+        return set()

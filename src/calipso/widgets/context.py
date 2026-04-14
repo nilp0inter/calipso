@@ -7,8 +7,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    SystemPromptPart,
     ToolCallPart,
+    UserPromptPart,
 )
 from pydantic_ai.tools import ToolDefinition
 
@@ -61,10 +61,10 @@ class Context(Widget):
     def view_messages(self) -> Iterator[ModelMessage]:
         yield from self.system_prompt.view_messages()
         yield from self.conversation_log.view_messages()
-        yield ModelRequest(parts=[SystemPromptPart(content=_STATE_BEGIN)])
+        yield ModelRequest(parts=[UserPromptPart(content=_STATE_BEGIN)])
         for widget in self.children:
             yield from widget.view_messages()
-        yield ModelRequest(parts=[SystemPromptPart(content=_STATE_END)])
+        yield ModelRequest(parts=[UserPromptPart(content=_STATE_END)])
 
     def view_tools(self) -> Iterator[ToolDefinition]:
         for widget in self._all_widgets():
@@ -139,3 +139,18 @@ class Context(Widget):
         self.conversation_log.add_response(response, segment)
 
         return tool_results, segment
+
+    def handle_widget_event(
+        self, tool_name: str, args: dict
+    ) -> str | None:
+        """Handle a frontend-initiated widget event.
+
+        Bypasses the action log protocol. Returns the update result,
+        or None if the tool is unknown or not frontend-callable.
+        """
+        owner = self._tool_owners.get(tool_name)
+        if owner is None:
+            return None
+        if tool_name not in owner.frontend_tools():
+            return None
+        return owner.update(tool_name, args)

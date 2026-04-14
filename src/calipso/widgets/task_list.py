@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.tools import ToolDefinition
 
 from calipso.widget import Widget
@@ -97,7 +97,7 @@ class TaskList(Widget):
                 icon = _STATUS_ICONS[task.status]
                 lines.append(f"{icon} {task.id}. {task.description}")
             text = "\n".join(lines)
-        yield ModelRequest(parts=[SystemPromptPart(content=text)])
+        yield ModelRequest(parts=[UserPromptPart(content=text)])
 
     def view_tools(self) -> Iterator[ToolDefinition]:
         yield from self._tool_defs
@@ -115,12 +115,27 @@ class TaskList(Widget):
                     else ""
                 )
                 desc = html_mod.escape(task.description)
+                toggle = (
+                    "sendWidgetEvent("
+                    "'update_task_status', "
+                    f"{{task_id: {task.id}, "
+                    "status: this.checked ? 'done' : 'pending'})"
+                )
+                remove = (
+                    "sendWidgetEvent("
+                    f"'remove_task', {{task_id: {task.id}}})"
+                )
                 lines.append(
                     f'<li class="task-{task.status}">'
                     f"<label>"
-                    f'<input type="checkbox" disabled{checked}{indeterminate}>'
+                    f'<input type="checkbox"'
+                    f"{checked}{indeterminate}"
+                    f' onchange="{toggle}">'
                     f" {desc}"
                     f"</label>"
+                    f' <button onclick="{remove}"'
+                    f' class="btn-remove"'
+                    f' title="Remove task">x</button>'
                     f"</li>"
                 )
             items = "<ul>" + "".join(lines) + "</ul>"
@@ -157,3 +172,6 @@ class TaskList(Widget):
             return f"Task {task_id} not found"
 
         raise NotImplementedError(f"TaskList does not handle tool '{tool_name}'")
+
+    def frontend_tools(self) -> set[str]:
+        return {"update_task_status", "remove_task"}

@@ -127,6 +127,26 @@ class ConversationLog(Widget):
                     yield ModelRequest(
                         parts=[SystemPromptPart(content=segment.summary)]
                     )
+                    for msg in segment.messages:
+                        if isinstance(msg, ModelResponse):
+                            tool_parts = [
+                                p
+                                for p in msg.parts
+                                if isinstance(p, ToolCallPart)
+                            ]
+                            if tool_parts:
+                                yield ModelResponse(
+                                    parts=tool_parts,
+                                    model_name=msg.model_name,
+                                )
+                        elif isinstance(msg, ModelRequest):
+                            tool_parts = [
+                                p
+                                for p in msg.parts
+                                if isinstance(p, ToolReturnPart)
+                            ]
+                            if tool_parts:
+                                yield ModelRequest(parts=tool_parts)
                 else:
                     yield from segment.messages
 
@@ -149,6 +169,8 @@ class ConversationLog(Widget):
                             f'<div class="msg summary">'
                             f"{html_mod.escape(segment.summary)}</div>"
                         )
+                        for msg in segment.messages:
+                            parts.extend(self._render_tool_parts(msg))
                     else:
                         for msg in segment.messages:
                             parts.extend(self._render_message(msg))
@@ -157,6 +179,29 @@ class ConversationLog(Widget):
             f'<div id="{self.widget_id()}" class="widget">'
             f"<h3>Conversation</h3>{content}</div>"
         )
+
+    @staticmethod
+    def _render_tool_parts(msg: ModelMessage) -> list[str]:
+        """Render only tool call/result parts from a message."""
+        parts: list[str] = []
+        if isinstance(msg, ModelResponse):
+            for part in msg.parts:
+                if isinstance(part, ToolCallPart):
+                    args = html_mod.escape(str(part.args_as_dict()))
+                    parts.append(
+                        f'<div class="msg tool-call">'
+                        f"<code>{html_mod.escape(part.tool_name)}({args})</code>"
+                        f"</div>"
+                    )
+        elif isinstance(msg, ModelRequest):
+            for part in msg.parts:
+                if isinstance(part, ToolReturnPart):
+                    parts.append(
+                        f'<div class="msg tool-result">'
+                        f"<code>→ {html_mod.escape(str(part.content))}</code>"
+                        f"</div>"
+                    )
+        return parts
 
     @staticmethod
     def _render_message(msg: ModelMessage) -> list[str]:

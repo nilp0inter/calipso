@@ -48,9 +48,18 @@ class DashboardServer:
             async for msg in ws:
                 if msg.type == web.WSMsgType.TEXT:
                     data = json.loads(msg.data)
-                    user_input = data.get("user_input", "").strip()
-                    if user_input:
-                        await self.input_queue.put(user_input)
+                    if "widget_event" in data:
+                        event = data["widget_event"]
+                        self.context.handle_widget_event(
+                            event["tool_name"],
+                            event.get("args", {}),
+                        )
+                        await self.push_updates()
+                    else:
+                        user_input = data.get("user_input", "")
+                        user_input = user_input.strip()
+                        if user_input:
+                            await self.input_queue.put(user_input)
         finally:
             self._clients.discard(ws)
         return ws

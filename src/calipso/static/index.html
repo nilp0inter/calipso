@@ -107,6 +107,29 @@
             padding: 0.3rem 0.5rem;
             font-size: 0.85rem;
         }
+        .goal-edit {
+            display: flex;
+            gap: 0.4rem;
+            margin-top: 0.5rem;
+        }
+        .goal-edit .goal-input {
+            flex: 1;
+            padding: 0.3rem 0.5rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 0.85rem;
+        }
+        .goal-edit button, .btn-remove {
+            padding: 0.2rem 0.5rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background: #f5f5f5;
+            cursor: pointer;
+            font-size: 0.8rem;
+        }
+        .goal-edit button:hover, .btn-remove:hover {
+            background: #e5e5e5;
+        }
         .msg.tool-call code, .msg.tool-result code {
             font-size: 0.8rem;
             color: #888;
@@ -176,6 +199,18 @@
         }
         document.body.addEventListener('htmx:oobAfterSwap', setIndeterminate);
         document.body.addEventListener('htmx:wsAfterMessage', setIndeterminate);
+
+        var _calipsoWs = null;
+        document.body.addEventListener('htmx:wsOpen', function(e) {
+            _calipsoWs = e.detail.socketWrapper;
+        });
+        function sendWidgetEvent(toolName, args) {
+            if (_calipsoWs) {
+                _calipsoWs.sendImmediately(JSON.stringify({
+                    widget_event: {tool_name: toolName, args: args}
+                }));
+            }
+        }
     </script>
 </body>
 </html>

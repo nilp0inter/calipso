@@ -7,6 +7,7 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     ToolCallPart,
+    UserPromptPart,
 )
 
 from calipso.widgets import (
@@ -28,15 +29,22 @@ class TestContextComposition:
             conversation_log=ConversationLog(),
         )
         msgs = list(ctx.view_messages())
-        contents = [
+        sys_contents = [
             p.content
             for m in msgs
             if isinstance(m, ModelRequest)
             for p in m.parts
             if isinstance(p, SystemPromptPart)
         ]
-        assert any("Hello" in c for c in contents)
-        assert any("Win" in c for c in contents)
+        user_contents = [
+            p.content
+            for m in msgs
+            if isinstance(m, ModelRequest)
+            for p in m.parts
+            if isinstance(p, UserPromptPart)
+        ]
+        assert any("Hello" in c for c in sys_contents)
+        assert any("Win" in c for c in user_contents)
 
     def test_view_tools_composes_children(self):
         ctx = Context(
@@ -66,19 +74,26 @@ class TestContextComposition:
         )
         ctx.add_user_message("Hello")
         msgs = list(ctx.view_messages())
-        contents = []
-        for m in msgs:
-            if isinstance(m, ModelRequest):
-                for p in m.parts:
-                    if isinstance(p, SystemPromptPart):
-                        contents.append(p.content)
-
-        # Identity comes first
-        assert "Identity" in contents[0]
-        # State markers wrap the panels at the end
-        assert "CURRENT STATE" in contents[-3]
-        assert "Win" in contents[-2]
-        assert "END STATE" in contents[-1]
+        # System prompts (identity, action rules)
+        sys_contents = [
+            p.content
+            for m in msgs
+            if isinstance(m, ModelRequest)
+            for p in m.parts
+            if isinstance(p, SystemPromptPart)
+        ]
+        assert "Identity" in sys_contents[0]
+        # State panels use UserPromptPart
+        user_contents = [
+            p.content
+            for m in msgs
+            if isinstance(m, ModelRequest)
+            for p in m.parts
+            if isinstance(p, UserPromptPart)
+        ]
+        assert "CURRENT STATE" in user_contents[-3]
+        assert "Win" in user_contents[-2]
+        assert "END STATE" in user_contents[-1]
 
 
 class TestContextDispatch:
@@ -162,6 +177,59 @@ class TestContextDispatch:
         # Task should NOT have been created
         task_list = ctx.children[0]
         assert len(task_list.tasks) == 0
+
+    def test_widget_event_dispatches_to_frontend_tool(self):
+        ctx = Context(
+            children=[TaskList()],
+            conversation_log=ConversationLog(),
+        )
+        # Create a task via LLM path first (need action wrapper)
+        ctx.add_user_message("test")
+        ctx.handle_response(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="action_log_start",
+                        args={"description": "create task"},
+                        tool_call_id="c0",
+                    )
+                ]
+            )
+        )
+        ctx.handle_response(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="create_task",
+                        args={"description": "Test task"},
+                        tool_call_id="c1",
+                    )
+                ]
+            )
+        )
+        # Now use frontend event to update it
+        result = ctx.handle_widget_event(
+            "update_task_status", {"task_id": 1, "status": "done"}
+        )
+        assert result is not None
+        assert "done" in result
+        assert ctx.children[0].tasks[0].status.value == "done"
+
+    def test_widget_event_rejects_non_frontend_tool(self):
+        ctx = Context(
+            children=[],
+            conversation_log=ConversationLog(),
+        )
+        # action_log_start is NOT in ConversationLog.frontend_tools()
+        result = ctx.handle_widget_event(
+            "action_log_start", {"description": "Hacked"}
+        )
+        assert result is None
+
+    def test_widget_event_rejects_unknown_tool(self):
+        ctx = Context(children=[], conversation_log=ConversationLog())
+        result = ctx.handle_widget_event("nonexistent", {})
+        assert result is None
 
     def test_text_response_recorded_in_conversation(self):
         ctx = Context(children=[], conversation_log=ConversationLog())

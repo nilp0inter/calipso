@@ -106,10 +106,17 @@
             border-top: 1px solid #ddd;
             background: #fff;
         }
-        #input-area form,
+        #input-area form {
+            display: flex;
+            width: 100%;
+        }
         #input-area fieldset {
             display: flex;
             gap: 0.5rem;
+            flex: 1;
+            border: none;
+            padding: 0;
+            margin: 0;
         }
         #input-area input[type="text"] {
             flex: 1;
@@ -128,11 +135,6 @@
             cursor: pointer;
         }
         #input-area button:hover { background: #1d4ed8; }
-        #input-area fieldset {
-            border: none;
-            padding: 0;
-            margin: 0;
-        }
         #input-area fieldset:disabled input,
         #input-area fieldset:disabled button {
             opacity: 0.5;

@@ -6,7 +6,7 @@ Built on [Pydantic AI](https://ai.pydantic.dev/)'s `Model` layer for provider-ag
 
 ## Current status
 
-The agent has a CLI entry point, a runner (agentic loop), and five widgets: `SystemPrompt`, `Goal`, `TaskList`, `ActionLog`, and `Conversation`. The widget architecture is functional and tested.
+The agent has a CLI entry point, a runner (agentic loop), and six widgets: `SystemPrompt`, `AgentsMd`, `Goal`, `TaskList`, `ConversationLog`, and `CodeExplorer`. The widget architecture is functional and tested. The `CodeExplorer` widget provides tree-sitter-based code reading with LLM-powered summarization — the agent sees signatures and descriptions, never raw code.
 
 ## Audience
 

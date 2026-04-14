@@ -1,5 +1,6 @@
 """Tests for widget HTML rendering and Context change detection."""
 
+import pytest
 from pydantic_ai import models
 
 from calipso.widgets.agents_md import AgentsMd
@@ -10,6 +11,7 @@ from calipso.widgets.system_prompt import SystemPrompt
 from calipso.widgets.task_list import TaskList
 
 models.ALLOW_MODEL_REQUESTS = False
+pytestmark = pytest.mark.anyio
 
 
 # --- widget_id ---
@@ -92,16 +94,16 @@ class TestTaskListHtml:
         html = TaskList().view_html()
         assert "No tasks" in html
 
-    def test_with_tasks(self):
+    async def test_with_tasks(self):
         tl = TaskList()
-        tl.update("create_task", {"description": "Write tests"})
+        await tl.update("create_task", {"description": "Write tests"})
         html = tl.view_html()
         assert "Write tests" in html
         assert "<ul>" in html
 
-    def test_escapes_task_description(self):
+    async def test_escapes_task_description(self):
         tl = TaskList()
-        tl.update("create_task", {"description": "<img src=x>"})
+        await tl.update("create_task", {"description": "<img src=x>"})
         html = tl.view_html()
         assert "<img" not in html
 
@@ -156,20 +158,20 @@ class TestContextChangedHtml:
         changed = ctx.changed_html()
         assert changed == []
 
-    def test_changed_html_detects_goal_change(self):
+    async def test_changed_html_detects_goal_change(self):
         ctx = self._make_context()
         ctx.all_html()
         # Mutate the goal widget
-        ctx.children[0].update("set_goal", {"goal": "New goal"})
+        await ctx.children[0].update("set_goal", {"goal": "New goal"})
         changed = ctx.changed_html()
         assert len(changed) == 1
         assert "New goal" in changed[0]
 
-    def test_changed_html_only_returns_changed(self):
+    async def test_changed_html_only_returns_changed(self):
         ctx = self._make_context()
         ctx.all_html()
         # Mutate task list, leave goal alone
-        ctx.children[1].update("create_task", {"description": "Do stuff"})
+        await ctx.children[1].update("create_task", {"description": "Do stuff"})
         changed = ctx.changed_html()
         ids = [c for c in changed if "widget-task-list" in c]
         assert len(ids) == 1

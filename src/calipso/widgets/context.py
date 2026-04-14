@@ -94,7 +94,7 @@ class Context(Widget):
     def add_user_message(self, text: str) -> None:
         self.conversation_log.add_user_message(text)
 
-    def handle_response(
+    async def handle_response(
         self, response: ModelResponse
     ) -> tuple[list[tuple[str, str]], Segment]:
         """Process a model response, dispatch tool calls, return tool results.
@@ -128,7 +128,7 @@ class Context(Widget):
                 tool_results.append((part.tool_call_id, f"Unknown tool: {name}"))
                 continue
 
-            result = owner.update(name, args)
+            result = await owner.update(name, args)
             tool_results.append((part.tool_call_id, result))
 
             # Track non-action-log tools for protocol enforcement
@@ -140,9 +140,7 @@ class Context(Widget):
 
         return tool_results, segment
 
-    def handle_widget_event(
-        self, tool_name: str, args: dict
-    ) -> str | None:
+    async def handle_widget_event(self, tool_name: str, args: dict) -> str | None:
         """Handle a frontend-initiated widget event.
 
         Bypasses the action log protocol. Returns the update result,
@@ -153,4 +151,4 @@ class Context(Widget):
             return None
         if tool_name not in owner.frontend_tools():
             return None
-        return owner.update(tool_name, args)
+        return await owner.update(tool_name, args)

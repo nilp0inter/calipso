@@ -1,5 +1,6 @@
 """Tests for the Context widget — composition and tool dispatch."""
 
+import pytest
 from pydantic_ai import models
 from pydantic_ai.messages import (
     ModelRequest,
@@ -19,6 +20,7 @@ from calipso.widgets import (
 )
 
 models.ALLOW_MODEL_REQUESTS = False
+pytestmark = pytest.mark.anyio
 
 
 class TestContextComposition:
@@ -97,7 +99,7 @@ class TestContextComposition:
 
 
 class TestContextDispatch:
-    def test_dispatch_tool_call_to_goal(self):
+    async def test_dispatch_tool_call_to_goal(self):
         ctx = Context(
             children=[Goal()],
             conversation_log=ConversationLog(),
@@ -113,7 +115,7 @@ class TestContextDispatch:
                 )
             ]
         )
-        ctx.handle_response(start_response)
+        await ctx.handle_response(start_response)
 
         response = ModelResponse(
             parts=[
@@ -124,16 +126,16 @@ class TestContextDispatch:
                 )
             ]
         )
-        results, _ = ctx.handle_response(response)
+        results, _ = await ctx.handle_response(response)
         assert len(results) == 1
         assert "Ship it" in results[0][1]
         assert ctx.children[0].text == "Ship it"
 
-    def test_dispatch_unknown_tool(self):
+    async def test_dispatch_unknown_tool(self):
         ctx = Context(children=[], conversation_log=ConversationLog())
         ctx.add_user_message("test")
         # Start an action first
-        ctx.handle_response(
+        await ctx.handle_response(
             ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -153,10 +155,10 @@ class TestContextDispatch:
                 )
             ]
         )
-        results, _ = ctx.handle_response(response)
+        results, _ = await ctx.handle_response(response)
         assert "Unknown" in results[0][1]
 
-    def test_action_log_protocol_enforcement(self):
+    async def test_action_log_protocol_enforcement(self):
         ctx = Context(
             children=[TaskList()],
             conversation_log=ConversationLog(),
@@ -172,20 +174,20 @@ class TestContextDispatch:
                 )
             ]
         )
-        results, _ = ctx.handle_response(response)
+        results, _ = await ctx.handle_response(response)
         assert "action_log_start" in results[0][1]
         # Task should NOT have been created
         task_list = ctx.children[0]
         assert len(task_list.tasks) == 0
 
-    def test_widget_event_dispatches_to_frontend_tool(self):
+    async def test_widget_event_dispatches_to_frontend_tool(self):
         ctx = Context(
             children=[TaskList()],
             conversation_log=ConversationLog(),
         )
         # Create a task via LLM path first (need action wrapper)
         ctx.add_user_message("test")
-        ctx.handle_response(
+        await ctx.handle_response(
             ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -196,7 +198,7 @@ class TestContextDispatch:
                 ]
             )
         )
-        ctx.handle_response(
+        await ctx.handle_response(
             ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -208,34 +210,34 @@ class TestContextDispatch:
             )
         )
         # Now use frontend event to update it
-        result = ctx.handle_widget_event(
+        result = await ctx.handle_widget_event(
             "update_task_status", {"task_id": 1, "status": "done"}
         )
         assert result is not None
         assert "done" in result
         assert ctx.children[0].tasks[0].status.value == "done"
 
-    def test_widget_event_rejects_non_frontend_tool(self):
+    async def test_widget_event_rejects_non_frontend_tool(self):
         ctx = Context(
             children=[],
             conversation_log=ConversationLog(),
         )
         # action_log_start is NOT in ConversationLog.frontend_tools()
-        result = ctx.handle_widget_event(
+        result = await ctx.handle_widget_event(
             "action_log_start", {"description": "Hacked"}
         )
         assert result is None
 
-    def test_widget_event_rejects_unknown_tool(self):
+    async def test_widget_event_rejects_unknown_tool(self):
         ctx = Context(children=[], conversation_log=ConversationLog())
-        result = ctx.handle_widget_event("nonexistent", {})
+        result = await ctx.handle_widget_event("nonexistent", {})
         assert result is None
 
-    def test_text_response_recorded_in_conversation(self):
+    async def test_text_response_recorded_in_conversation(self):
         ctx = Context(children=[], conversation_log=ConversationLog())
         ctx.add_user_message("Hello")
         response = ModelResponse(parts=[TextPart(content="Hi back!")])
-        results, _ = ctx.handle_response(response)
+        results, _ = await ctx.handle_response(response)
         assert results == []  # no tool calls
         assert len(ctx.conversation_log.turns) == 1
         assert len(ctx.conversation_log.turns[0].segments[0].messages) == 1

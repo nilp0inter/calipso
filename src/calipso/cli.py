@@ -11,6 +11,7 @@ from calipso.runner import run_turn
 from calipso.server import DashboardServer
 from calipso.widgets import (
     AgentsMd,
+    CodeExplorer,
     Context,
     ConversationLog,
     Goal,
@@ -80,6 +81,7 @@ async def async_main():
             AgentsMd(),
             Goal(),
             TaskList(),
+            CodeExplorer(),
         ],
         conversation_log=ConversationLog(),
     )

@@ -62,7 +62,7 @@ class Widget:
         """Return an HTML fragment for this widget's browser panel."""
         return f'<div id="{self.widget_id()}"></div>'
 
-    def update(self, tool_name: str, args: dict) -> str:
+    async def update(self, tool_name: str, args: dict) -> str:
         """Handle a tool call directed at this widget.
 
         Returns the tool's response string.

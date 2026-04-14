@@ -63,10 +63,10 @@ class Goal(Widget):
             '<div class="goal-edit">'
             '<input type="text" class="goal-input"'
             f' value="{escaped}"'
-            " placeholder=\"Set a goal...\""
+            ' placeholder="Set a goal..."'
             " onkeydown=\"if(event.key==='Enter'){"
             "sendWidgetEvent('set_goal',"
-            "{goal:this.value});}\""
+            '{goal:this.value});}"'
             ">"
             ' <button onclick="'
             "sendWidgetEvent('clear_goal', {})"
@@ -78,7 +78,7 @@ class Goal(Widget):
             f"<h3>Goal</h3>{content}{form}</div>"
         )
 
-    def update(self, tool_name: str, args: dict) -> str:
+    async def update(self, tool_name: str, args: dict) -> str:
         if tool_name == "set_goal":
             self.text = args["goal"]
             return f"Goal set: {self.text}"

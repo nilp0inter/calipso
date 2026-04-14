@@ -33,17 +33,11 @@ test_login_redirects - AssertionError: expected 302, got 200
 
 Updates are triggered by the runner after relevant tool calls, not by DSL commands.
 
-### Interactive: Code Explorer
+### Interactive: Code Explorer (implemented)
 
-Maintains a structural overview of the codebase — modules, classes, functions — sourced from an LSP. The agent navigates it via a DSL that is a subset of LSP commands (go to definition, list symbols, expand module). The widget re-renders the current view after each command.
+Opens files and parses them with tree-sitter. The agent navigates via raw tree-sitter S-expression queries (`open_file`, `close_file`, `query`, `query_all`). Query results pass through a pipeline that strips comments/docstrings and feeds the code to a cheap summarizer LLM, which preserves signatures verbatim and replaces bodies with `[...REDACTED...]` markers and descriptions.
 
-This is how the agent understands the shape of the code without reading every file.
-
-### Derived: Code Summary
-
-Takes raw code (stripped of comments) and feeds it to a fast, cheap model that returns a compact description of what the code does. This is the primary way the agent learns about the specifics of code — not by reading source directly, but by reading summaries that fit the token budget.
-
-The DSL controls which code is summarized (file, function, class) and at what level of detail.
+This is how the agent understands the shape of the code without reading raw source. It never sees code bodies, comments, or docstrings — only signatures and summaries.
 
 ### Organizational: Tasklist
 

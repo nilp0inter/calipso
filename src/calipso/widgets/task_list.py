@@ -121,10 +121,7 @@ class TaskList(Widget):
                     f"{{task_id: {task.id}, "
                     "status: this.checked ? 'done' : 'pending'})"
                 )
-                remove = (
-                    "sendWidgetEvent("
-                    f"'remove_task', {{task_id: {task.id}}})"
-                )
+                remove = f"sendWidgetEvent('remove_task', {{task_id: {task.id}}})"
                 lines.append(
                     f'<li class="task-{task.status}">'
                     f"<label>"
@@ -143,7 +140,7 @@ class TaskList(Widget):
             f'<div id="{self.widget_id()}" class="widget"><h3>Tasks</h3>{items}</div>'
         )
 
-    def update(self, tool_name: str, args: dict) -> str:
+    async def update(self, tool_name: str, args: dict) -> str:
         if tool_name == "create_task":
             task = Task(id=self._next_id, description=args["description"])
             self.tasks.append(task)

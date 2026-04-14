@@ -60,7 +60,7 @@ async def test_push_updates_sends_changed():
             _ = await ws.receive_str()  # consume initial state
 
             # Mutate a widget and push
-            ctx.children[0].update("set_goal", {"goal": "Test goal"})
+            await ctx.children[0].update("set_goal", {"goal": "Test goal"})
             await server.push_updates()
 
             msg = await ws.receive_str()

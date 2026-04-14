@@ -6,6 +6,12 @@
 
 Configures the Pydantic AI `Model` instance for provider-agnostic LLM communication. Uses `OpenAIChatModel` with an OpenRouter provider (currently `x-ai/grok-4-fast`). Exposes `create_model()` and `create_http_client()` for HTTP-level instrumentation.
 
+## Summarizer
+
+**Source:** `src/calipso/summarizer.py`
+
+A Pydantic AI agent that takes Python code (with comments already stripped) and produces a summary preserving signatures verbatim while replacing code bodies with `[...REDACTED...]` followed by a description. Uses a cheap, fast model (`liquid/lfm-2.5-1.2b-thinking:free` via OpenRouter) to keep costs low. Called by the `CodeExplorer` widget after every tree-sitter query.
+
 ## Runner
 
 **Source:** `src/calipso/runner.py`
@@ -54,6 +60,7 @@ Everything in the agent's context is a widget — an Elm-inspired component with
 | **Goal** | `src/calipso/widgets/goal.py` | Current objective text | `set_goal`, `clear_goal` (both frontend-callable) | Goal text as `## Goal` panel with inline edit input and clear button |
 | **TaskList** | `src/calipso/widgets/task_list.py` | Tasks with statuses (`pending`, `in_progress`, `done`) | `create_task`, `update_task_status`\*, `remove_task`\* | Compact checklist as `## Tasks` panel with interactive checkboxes and remove buttons |
 | **ConversationLog** | `src/calipso/widgets/conversation_log.py` | Turns with segmented messages + protocol state | `action_log_start`, `action_log_end` | Action protocol rules + conversation history; summarized segments render summary + tool call/return messages, unsummarized render full messages |
+| **CodeExplorer** | `src/calipso/widgets/code_explorer.py` | Open files with cached parse trees, query results per file | `open_file`, `close_file`\*, `query`, `query_all` | Open files list + tree-sitter query results (signatures + `[...REDACTED...]` body summaries) |
 | **Context** | `src/calipso/widgets/context.py` | system_prompt + children (state panels) + conversation_log + HTML cache | None | Composes: system prompt first, conversation log second, state panels last (wrapped in `CURRENT STATE` markers as user messages), dispatches tool calls and frontend widget events, detects changed widgets via `changed_html()` |
 
 \* = frontend-callable (invocable from the browser without LLM involvement)
@@ -63,5 +70,3 @@ Everything in the agent's context is a widget — an Elm-inspired component with
 | Widget | State | DSL | Renders |
 |---|---|---|---|
 | **Pytest** | Test results | None (reactive) | `TESTS PASSING` or failure details |
-| **Code Explorer** | LSP-sourced structural view | Subset of LSP commands | Module/class/function overview |
-| **Code Summary** | Compact description from a cheap model | Select target and detail level | Dense summary of what the code does |

@@ -58,6 +58,6 @@ All widget HTML output is rendered through a shared `render_md()` function that 
 
 ## Current state
 
-The agent has five widgets: `SystemPrompt` (static identity/framing text), `AgentsMd` (behavioral instructions loaded from `AGENTS.md`), `Goal` (directional — set/clear, editable from browser), `TaskList` (organizational — CRUD with interactive checkboxes and remove buttons), and `ConversationLog` (manages user/assistant turns partitioned into segments with action log protocol enforcement — summarized segments render a summary plus tool call/return messages, unsummarized segments render full messages).
+The agent has six widgets: `SystemPrompt` (static identity/framing text), `AgentsMd` (behavioral instructions loaded from `AGENTS.md`), `Goal` (directional — set/clear, editable from browser), `TaskList` (organizational — CRUD with interactive checkboxes and remove buttons), `ConversationLog` (manages user/assistant turns partitioned into segments with action log protocol enforcement — summarized segments render a summary plus tool call/return messages, unsummarized segments render full messages), and `CodeExplorer` (tree-sitter-based code reading — the agent opens files, runs S-expression queries, and sees only signatures plus LLM-generated summaries with `[...REDACTED...]` markers replacing code bodies).
 
 The Context renders in a specific order: system prompt first, then conversation history, then state panels (wrapped in `CURRENT STATE` / `END STATE` markers as user messages) so the model sees live state right before generating its response.

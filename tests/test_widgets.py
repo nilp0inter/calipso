@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 from pydantic_ai import models
 from pydantic_ai.messages import (
     ModelRequest,
@@ -20,6 +21,7 @@ from calipso.widgets.system_prompt import SystemPrompt
 from calipso.widgets.task_list import TaskList, TaskStatus
 
 models.ALLOW_MODEL_REQUESTS = False
+pytestmark = pytest.mark.anyio
 
 
 # --- Widget base ---
@@ -95,17 +97,17 @@ class TestGoal:
         msgs = list(w.view_messages())
         assert "Fix the bug" in msgs[0].parts[0].content
 
-    def test_set_goal(self):
+    async def test_set_goal(self):
         w = Goal()
-        result = w.update("set_goal", {"goal": "Deploy v2"})
+        result = await w.update("set_goal", {"goal": "Deploy v2"})
         assert "Deploy v2" in result
         assert w.text == "Deploy v2"
         msgs = list(w.view_messages())
         assert "Deploy v2" in msgs[0].parts[0].content
 
-    def test_clear_goal(self):
+    async def test_clear_goal(self):
         w = Goal(text="Something")
-        result = w.update("clear_goal", {})
+        result = await w.update("clear_goal", {})
         assert "cleared" in result.lower()
         assert w.text is None
 
@@ -125,35 +127,35 @@ class TestTaskList:
         msgs = list(w.view_messages())
         assert "none" in msgs[0].parts[0].content.lower()
 
-    def test_create_and_view(self):
+    async def test_create_and_view(self):
         w = TaskList()
-        w.update("create_task", {"description": "Write tests"})
-        w.update("create_task", {"description": "Deploy"})
+        await w.update("create_task", {"description": "Write tests"})
+        await w.update("create_task", {"description": "Deploy"})
         msgs = list(w.view_messages())
         content = msgs[0].parts[0].content
         assert "Write tests" in content
         assert "Deploy" in content
         assert "[ ]" in content  # pending icon
 
-    def test_update_status(self):
+    async def test_update_status(self):
         w = TaskList()
-        w.update("create_task", {"description": "Task A"})
-        w.update("update_task_status", {"task_id": 1, "status": "done"})
+        await w.update("create_task", {"description": "Task A"})
+        await w.update("update_task_status", {"task_id": 1, "status": "done"})
         assert w.tasks[0].status == TaskStatus.DONE
         msgs = list(w.view_messages())
         assert "[x]" in msgs[0].parts[0].content
 
-    def test_remove_task(self):
+    async def test_remove_task(self):
         w = TaskList()
-        w.update("create_task", {"description": "Temp"})
-        result = w.update("remove_task", {"task_id": 1})
+        await w.update("create_task", {"description": "Temp"})
+        result = await w.update("remove_task", {"task_id": 1})
         assert "Removed" in result
         assert len(w.tasks) == 0
 
-    def test_invalid_status(self):
+    async def test_invalid_status(self):
         w = TaskList()
-        w.update("create_task", {"description": "X"})
-        result = w.update("update_task_status", {"task_id": 1, "status": "bad"})
+        await w.update("create_task", {"description": "X"})
+        result = await w.update("update_task_status", {"task_id": 1, "status": "bad"})
         assert "Invalid" in result
 
     def test_view_tools(self):
@@ -206,33 +208,33 @@ class TestConversationLog:
         msgs = list(w.view_messages())
         assert response in msgs
 
-    def test_action_start_records_active_action(self):
+    async def test_action_start_records_active_action(self):
         w = ConversationLog()
         w.add_user_message("Do something")
         assert len(w.turns[0].segments) == 1
-        w.update("action_log_start", {"description": "Do the thing"})
+        await w.update("action_log_start", {"description": "Do the thing"})
         # action_log_start does NOT create a new segment
         assert len(w.turns[0].segments) == 1
         assert w._active_action == "Do the thing"
 
-    def test_action_end_summarizes_and_creates_new_segment(self):
+    async def test_action_end_summarizes_and_creates_new_segment(self):
         w = ConversationLog()
         w.add_user_message("Do something")
-        w.update("action_log_start", {"description": "Do the thing"})
+        await w.update("action_log_start", {"description": "Do the thing"})
         # Simulate some messages in the action segment
         seg = w._current_segment()
         w.add_response(ModelResponse(parts=[TextPart(content="working...")]), seg)
-        w.update("action_log_end", {"result": "Thing was done successfully"})
+        await w.update("action_log_end", {"result": "Thing was done successfully"})
         # The current segment (Seg0) should be summarized
         assert "Thing was done successfully" in w.turns[0].segments[0].summary
         # A new segment should exist for subsequent messages
         assert len(w.turns[0].segments) == 2
         assert w._active_action is None
 
-    def test_summarized_segment_renders_summary_and_tool_calls(self):
+    async def test_summarized_segment_renders_summary_and_tool_calls(self):
         w = ConversationLog()
         w.add_user_message("Do something")
-        w.update("action_log_start", {"description": "Do the thing"})
+        await w.update("action_log_start", {"description": "Do the thing"})
         seg = w._current_segment()
         # Response with both text and a tool call
         tool_call = ToolCallPart(
@@ -249,7 +251,7 @@ class TestConversationLog:
             tool_name="read_file", content="file contents", tool_call_id="tc1"
         )
         w.add_tool_results(ModelRequest(parts=[tool_return]), seg)
-        w.update("action_log_end", {"result": "Done!"})
+        await w.update("action_log_end", {"result": "Done!"})
 
         msgs = list(w.view_messages())
         # The summary should appear as a system prompt
@@ -283,15 +285,15 @@ class TestConversationLog:
         ]
         assert len(tool_return_msgs) == 1
 
-    def test_summarized_segment_drops_text_parts(self):
+    async def test_summarized_segment_drops_text_parts(self):
         """Text-only responses in summarized segments are dropped entirely."""
         w = ConversationLog()
         w.add_user_message("Do something")
-        w.update("action_log_start", {"description": "Do the thing"})
+        await w.update("action_log_start", {"description": "Do the thing"})
         seg = w._current_segment()
         text_response = ModelResponse(parts=[TextPart(content="thinking...")])
         w.add_response(text_response, seg)
-        w.update("action_log_end", {"result": "Done!"})
+        await w.update("action_log_end", {"result": "Done!"})
 
         msgs = list(w.view_messages())
         # No ModelResponse should appear (text-only response is dropped)
@@ -320,31 +322,31 @@ class TestConversationLogProtocol:
         error = w.check_protocol("action_log_end")
         assert error is not None
 
-    def test_check_protocol_tool_type_lock(self):
+    async def test_check_protocol_tool_type_lock(self):
         w = ConversationLog()
         w.add_user_message("test")
-        w.update("action_log_start", {"description": "Do stuff"})
+        await w.update("action_log_start", {"description": "Do stuff"})
         w.track_tool("tool_a")
         assert w.check_protocol("tool_a") is None
         error = w.check_protocol("tool_b")
         assert error is not None
         assert "tool_a" in error
 
-    def test_protocol_rejects_empty_action(self):
+    async def test_protocol_rejects_empty_action(self):
         w = ConversationLog()
         w.add_user_message("test")
-        w.update("action_log_start", {"description": "Read file"})
+        await w.update("action_log_start", {"description": "Read file"})
         assert w._active_action == "Read file"
         error = w.check_protocol("action_log_end")
         assert error is not None
         assert "without doing anything" in error
 
-    def test_protocol_start_tool_then_end(self):
+    async def test_protocol_start_tool_then_end(self):
         w = ConversationLog()
         w.add_user_message("test")
-        w.update("action_log_start", {"description": "Read file"})
+        await w.update("action_log_start", {"description": "Read file"})
         w.track_tool("read_file")
         assert w.check_protocol("action_log_end") is None
-        result = w.update("action_log_end", {"result": "File read OK"})
+        result = await w.update("action_log_end", {"result": "File read OK"})
         assert "logged" in result.lower()
         assert w._active_action is None

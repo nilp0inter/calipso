@@ -29,18 +29,19 @@ uv run pytest tests/test_widgets.py::TestConversationLog
 ## Architecture
 
 - **Model setup** (`src/calipso/model.py`): configures the Pydantic AI `Model` instance (OpenRouter provider). No `Agent` — we call `Model.request()` directly.
+- **Summarizer** (`src/calipso/summarizer.py`): Pydantic AI `Agent` using a cheap model (`liquid/lfm-2.5-1.2b-thinking:free`) that takes comment-stripped code and returns signatures with `[...REDACTED...]` body descriptions. Used by the CodeExplorer widget.
 - **Runner** (`src/calipso/runner.py`): thin agentic loop. Materializes context views, calls `Model.request()`, dispatches tool calls. Accepts an `on_update` callback for pushing live updates.
 - **Dashboard server** (`src/calipso/server.py`): aiohttp HTTP + WebSocket server. Serves the htmx SPA at `/`, pushes per-widget HTML diffs via `hx-swap-oob` over WebSocket, receives user input and frontend widget events.
 - **SPA** (`src/calipso/static/index.html`): htmx single-page app with WebSocket extension. Sidebar for state widgets, main area for conversation, input bar. No build step. Exposes `sendWidgetEvent()` for browser-initiated widget updates.
 - **CLI** (`src/calipso/cli.py`): async entry point. Creates model, assembles widget tree, starts `DashboardServer`, reads input from WebSocket queue. Registered as `calipso` console script.
-- **Widgets** (`src/calipso/widgets/`): composable units that render into the model's context and the browser. Each is a `Widget` subclass with `view_messages()`, `view_tools()`, `view_html()`, `update()`, and `frontend_tools()`. HTML is rendered via `render_md()` (markdown to safe HTML). Widgets can declare frontend-callable tools (via `frontend_tools()`) that the browser can invoke directly without LLM involvement. The root `Context` widget composes all children via `yield from`, tracks HTML changes via `changed_html()`, and routes frontend events via `handle_widget_event()`.
+- **Widgets** (`src/calipso/widgets/`): composable units that render into the model's context and the browser. Each is a `Widget` subclass with `view_messages()`, `view_tools()`, `view_html()`, `async update()`, and `frontend_tools()`. The `update()` method is async to support widgets that need LLM calls (e.g., CodeExplorer's summarizer). HTML is rendered via `render_md()` (markdown to safe HTML). Widgets can declare frontend-callable tools (via `frontend_tools()`) that the browser can invoke directly without LLM involvement. The root `Context` widget composes all children via `yield from`, tracks HTML changes via `changed_html()`, and routes frontend events via `handle_widget_event()`.
 
 ## Testing conventions
 
 - `models.ALLOW_MODEL_REQUESTS = False` is set at module level in test files to prevent real API calls.
 - Tests use `pytest-anyio` — test functions are `async def` with `pytestmark = pytest.mark.anyio`.
 - Use `TestModel(custom_output_text=...)` or `FunctionModel` for deterministic outputs.
-- Widget tests are synchronous (test view rendering and update logic directly). Runner tests are async.
+- Widget tests that call `update()` are async (since `update()` is `async def`). View-only tests remain synchronous. Runner tests are async.
 
 ## Infrastructure
 

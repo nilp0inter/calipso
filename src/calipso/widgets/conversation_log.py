@@ -130,9 +130,7 @@ class ConversationLog(Widget):
                     for msg in segment.messages:
                         if isinstance(msg, ModelResponse):
                             tool_parts = [
-                                p
-                                for p in msg.parts
-                                if isinstance(p, ToolCallPart)
+                                p for p in msg.parts if isinstance(p, ToolCallPart)
                             ]
                             if tool_parts:
                                 yield ModelResponse(
@@ -141,9 +139,7 @@ class ConversationLog(Widget):
                                 )
                         elif isinstance(msg, ModelRequest):
                             tool_parts = [
-                                p
-                                for p in msg.parts
-                                if isinstance(p, ToolReturnPart)
+                                p for p in msg.parts if isinstance(p, ToolReturnPart)
                             ]
                             if tool_parts:
                                 yield ModelRequest(parts=tool_parts)
@@ -274,7 +270,7 @@ class ConversationLog(Widget):
             if self._allowed_tool is None:
                 self._allowed_tool = tool_name
 
-    def update(self, tool_name: str, args: dict) -> str:
+    async def update(self, tool_name: str, args: dict) -> str:
         if tool_name == "action_log_start":
             self._active_action = args["description"]
             self._allowed_tool = None

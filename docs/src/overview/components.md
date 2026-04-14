@@ -6,17 +6,19 @@
 
 The central component. A Pydantic AI `Agent` instance configured with:
 
-- **Model:** `anthropic:claude-haiku-3-5`
+- **Model:** OpenAI-compatible via OpenRouter (currently `minimax/minimax-m2.7`)
 - **`defer_model_check=True`** — allows the agent module to be imported without an API key present (important for testing)
 - **`capabilities=[]`** — a list of `AbstractCapability` subclasses that provide instructions, tools, and hooks
 
-The agent is a module-level singleton. Tests override it via `agent.override(model=TestModel())` rather than constructing a new one.
+The module exposes a `create_agent()` factory that accepts an optional `httpx.AsyncClient` for HTTP-level instrumentation, and a `create_http_client()` helper for building clients with request/response event hooks. A module-level `agent` singleton is created for convenience; tests override it via `agent.override(model=TestModel())`.
 
 ## CLI
 
 **Source:** `src/calipso/cli.py`
 
-A minimal entry point registered as the `calipso` console script in `pyproject.toml`. Calls `agent.run_sync()` and prints the output. No argument parsing yet.
+A REPL entry point registered as the `calipso` console script in `pyproject.toml`. Runs an interactive loop that sends user input to the agent and prints responses.
+
+Each turn's raw HTTP request/response payloads are saved to `prompts/NNNN.json`. These are the actual JSON bodies exchanged with the model provider (not Pydantic AI's internal `ModelMessage` format), captured via httpx event hooks on the underlying HTTP client.
 
 ## Capabilities
 

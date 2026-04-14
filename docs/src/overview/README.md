@@ -6,7 +6,7 @@ Calipso is a Python CLI application built on Pydantic AI. The agent talks to an 
 flowchart LR
     User((User)) <--> CLI["CLI\n(calipso)"]
     CLI <--> Agent["Pydantic AI\nAgent"]
-    Agent <--> LLM["Anthropic\nClaude"]
+    Agent <--> LLM["LLM\n(via OpenRouter)"]
 ```
 
 ## How capabilities fit in

@@ -15,6 +15,7 @@
         ruff            # linter + formatter
         go-task         # task runner
         mdbook          # documentation builder
+        mdbook-mermaid  # mermaid diagram preprocessor
       ];
 
       # Local-dev-only tools layered on top of the CI packages.

@@ -7,27 +7,37 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 _INSTRUCTIONS = """\
-You are a code summarizer. You receive Python source code with comments \
-already stripped.
+You summarize Python code. Comments have already been stripped.
 
-Your job:
-1. Keep every function and class SIGNATURE exactly as-is (the `def` or \
-`class` line, including decorators).
-2. Replace every function/method BODY with "[...REDACTED...]" followed by \
-a single-line comment describing what it does.
-3. For top-level statements (imports, assignments, etc.), keep them as-is.
-4. Output ONLY the transformed code. No explanations, no markdown fences.
+RULES:
+- Keep every def/class SIGNATURE line exactly as written.
+- Replace the BODY of every function/method/class with EXACTLY ONE line:
+  [...REDACTED...] # short description of what the body does
+- The "# short description" part is MANDATORY. Never omit it.
+- Drop imports, assignments, and any other top-level code.
+- Output ONLY the result. No markdown fences, no explanations.
 
-Example input:
+EXAMPLE INPUT:
 def process_batch(items: list[Item], config: Config) -> Result:
     validated = validate(config)
     chunks = chunk_list(items, validated.size)
     results = pool.map(run, chunks)
     return aggregate(results)
 
-Example output:
+class Processor:
+    def run(self) -> None:
+        self.setup()
+        self.execute()
+
+EXAMPLE OUTPUT:
 def process_batch(items: list[Item], config: Config) -> Result:
     [...REDACTED...] # validates config, chunks items, maps over pool, aggregates
+
+class Processor:
+    [...REDACTED...] # processor with setup and execute lifecycle
+
+    def run(self) -> None:
+        [...REDACTED...] # calls setup then execute
 """
 
 

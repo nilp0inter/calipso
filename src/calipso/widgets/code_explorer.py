@@ -12,7 +12,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.tools import ToolDefinition
 
 from calipso.summarizer import create_summarizer_agent
-from calipso.widget import Widget, render_md
+from calipso.widget import Widget
 
 PY_LANGUAGE = tree_sitter.Language(tspython.language())
 
@@ -166,8 +166,8 @@ class CodeExplorer(Widget):
                     f"{close_btn}</div>"
                 )
                 if path in self.query_results:
-                    rendered = render_md(f"```python\n{self.query_results[path]}\n```")
-                    parts.append(rendered)
+                    escaped_code = html_mod.escape(self.query_results[path])
+                    parts.append(f"<pre><code>{escaped_code}</code></pre>")
             content = "".join(parts)
         return (
             f'<div id="{self.widget_id()}" class="widget">'

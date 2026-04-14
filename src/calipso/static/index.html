@@ -10,33 +10,98 @@
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
             font-family: system-ui, -apple-system, sans-serif;
-            display: grid;
-            grid-template-columns: 280px 1fr 1fr;
-            grid-template-rows: 1fr auto;
+            display: flex;
             height: 100vh;
             background: #f5f5f5;
             color: #1a1a1a;
+            overflow: hidden;
         }
-        #sidebar {
-            grid-row: 1 / 3;
-            overflow-y: auto;
-            padding: 1rem;
-            border-right: 1px solid #ddd;
+
+        /* Activity Bar */
+        #activity-bar {
+            width: 48px;
+            min-width: 48px;
+            background: #252526;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-top: 0.5rem;
+            gap: 0.25rem;
+            border-right: 1px solid #1a1a1a;
+        }
+        #activity-bar button {
+            width: 40px;
+            height: 40px;
+            background: none;
+            border: none;
+            border-left: 2px solid transparent;
+            color: #858585;
+            font-size: 1.2rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 0;
+            transition: color 0.15s;
+            position: relative;
+        }
+        #activity-bar button .badge {
+            display: none;
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #2563eb;
+        }
+        #activity-bar button .badge.visible {
+            display: block;
+        }
+        #activity-bar button:hover {
+            color: #e0e0e0;
+        }
+        #activity-bar button.active {
+            color: #fff;
+            border-left-color: #2563eb;
+        }
+
+        /* Side Panel */
+        #side-panel {
+            width: 320px;
+            min-width: 320px;
             background: #fff;
-        }
-        #code-panel {
-            grid-row: 1 / 3;
+            border-right: 1px solid #ddd;
             overflow-y: auto;
             padding: 1rem;
-            border-right: 1px solid #ddd;
-            background: #fafafa;
+            display: flex;
+            flex-direction: column;
+        }
+        #side-panel.hidden {
+            display: none;
+        }
+        .panel-widget {
+            display: none;
+            flex: 1;
+            overflow-y: auto;
+        }
+        .panel-widget.active {
+            display: block;
+        }
+
+        /* Chat Area */
+        #chat-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
         }
         #main {
+            flex: 1;
             overflow-y: auto;
             padding: 1rem;
         }
         #input-area {
-            grid-column: 3;
             padding: 1rem;
             border-top: 1px solid #ddd;
             background: #fff;
@@ -63,6 +128,18 @@
             cursor: pointer;
         }
         #input-area button:hover { background: #1d4ed8; }
+        #input-area fieldset {
+            border: none;
+            padding: 0;
+            margin: 0;
+        }
+        #input-area fieldset:disabled input,
+        #input-area fieldset:disabled button {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Widget common styles */
         .widget {
             margin-bottom: 1rem;
             padding: 0.75rem;
@@ -81,17 +158,6 @@
             white-space: pre-wrap;
             font-size: 0.85rem;
             color: #444;
-        }
-        .widget ul { list-style: none; padding: 0; }
-        .widget li { padding: 0.25rem 0; font-size: 0.9rem; }
-        .task-done label { text-decoration: line-through; color: #999; }
-        .task-in_progress label { color: #b45309; }
-        .msg { padding: 0.4rem 0; font-size: 0.9rem; }
-        .msg.user { color: #2563eb; }
-        .msg.assistant { color: #1a1a1a; }
-        .msg.summary { color: #666; font-style: italic; font-size: 0.85rem; }
-        .widget p { margin: 0.25rem 0; }
-        .widget pre {
             background: #f0f0f0;
             padding: 0.5rem;
             border-radius: 4px;
@@ -105,6 +171,9 @@
         }
         .widget pre code { background: none; padding: 0; }
         .widget ul, .widget ol { padding-left: 1.5rem; }
+        .widget ul { list-style: none; padding: 0; }
+        .widget li { padding: 0.25rem 0; font-size: 0.9rem; }
+        .widget p { margin: 0.25rem 0; }
         .widget table {
             border-collapse: collapse;
             margin: 0.5rem 0;
@@ -114,6 +183,22 @@
             padding: 0.3rem 0.5rem;
             font-size: 0.85rem;
         }
+
+        /* Task styles */
+        .task-done label { text-decoration: line-through; color: #999; }
+        .task-in_progress label { color: #b45309; }
+
+        /* Message styles */
+        .msg { padding: 0.4rem 0; font-size: 0.9rem; }
+        .msg.user { color: #2563eb; }
+        .msg.assistant { color: #1a1a1a; }
+        .msg.summary { color: #666; font-style: italic; font-size: 0.85rem; }
+        .msg.tool-call code, .msg.tool-result code {
+            font-size: 0.8rem;
+            color: #888;
+        }
+
+        /* Goal edit */
         .goal-edit {
             display: flex;
             gap: 0.4rem;
@@ -137,10 +222,8 @@
         .goal-edit button:hover, .btn-remove:hover {
             background: #e5e5e5;
         }
-        .msg.tool-call code, .msg.tool-result code {
-            font-size: 0.8rem;
-            color: #888;
-        }
+
+        /* Thinking indicator */
         #thinking {
             display: none;
             padding: 0.5rem 0.75rem;
@@ -164,19 +247,9 @@
         }
         #thinking .dot:nth-child(2) { animation-delay: 0.2s; }
         #thinking .dot:nth-child(3) { animation-delay: 0.4s; }
-        #input-area fieldset {
-            border: none;
-            padding: 0;
-            margin: 0;
-        }
-        #input-area fieldset:disabled input,
-        #input-area fieldset:disabled button {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-        /* Code Explorer panel */
-        #code-panel .widget { border-color: #d0d7de; }
-        #code-panel .file-entry {
+
+        /* Code panel widget styles */
+        .file-entry {
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -186,17 +259,18 @@
             border-radius: 4px;
             font-size: 0.85rem;
         }
-        #code-panel .file-entry code {
+        .file-entry code {
             background: none;
             padding: 0;
             font-weight: 500;
         }
-        #code-panel pre {
+        .panel-widget pre {
             max-height: 60vh;
             overflow-y: auto;
             font-size: 0.8rem;
             line-height: 1.4;
         }
+
         /* File Explorer directory listing */
         .dir-listing {
             list-style: none;
@@ -215,32 +289,53 @@
     </style>
 </head>
 <body hx-ext="ws" ws-connect="/ws">
-    <div id="sidebar">
-        <div id="widget-system-prompt" class="widget"><h3>System Prompt</h3></div>
-        <div id="widget-agents-md" class="widget"><h3>AGENTS.md</h3></div>
-        <div id="widget-goal" class="widget"><h3>Goal</h3></div>
-        <div id="widget-task-list" class="widget"><h3>Tasks</h3></div>
+    <div id="activity-bar">
+        <button data-panel="widget-system-prompt" title="System Prompt">&#9881;<span class="badge"></span></button>
+        <button data-panel="widget-agents-md" title="Agents">&#128196;<span class="badge"></span></button>
+        <button data-panel="widget-goal" title="Goal">&#127919;<span class="badge"></span></button>
+        <button data-panel="widget-task-list" title="Tasks">&#9745;<span class="badge"></span></button>
+        <button data-panel="widget-file-explorer" title="Files">&#128193;<span class="badge"></span></button>
+        <button data-panel="widget-code-explorer" title="Code">&#128270;<span class="badge"></span></button>
     </div>
-    <div id="code-panel">
-        <div id="widget-file-explorer" class="widget"><h3>File Explorer</h3><p><em>No file open</em></p></div>
-        <div id="widget-code-explorer" class="widget"><h3>Code Explorer</h3><p><em>No files open</em></p></div>
-    </div>
-    <div id="main">
-        <div id="widget-conversation-log" class="widget"><h3>Conversation</h3></div>
-        <div id="thinking">
-            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-            <span>Thinking...</span>
+    <div id="side-panel" class="hidden">
+        <div class="panel-widget" data-for="widget-system-prompt">
+            <div id="widget-system-prompt" class="widget"><h3>System Prompt</h3></div>
+        </div>
+        <div class="panel-widget" data-for="widget-agents-md">
+            <div id="widget-agents-md" class="widget"><h3>AGENTS.md</h3></div>
+        </div>
+        <div class="panel-widget" data-for="widget-goal">
+            <div id="widget-goal" class="widget"><h3>Goal</h3></div>
+        </div>
+        <div class="panel-widget" data-for="widget-task-list">
+            <div id="widget-task-list" class="widget"><h3>Tasks</h3></div>
+        </div>
+        <div class="panel-widget" data-for="widget-file-explorer">
+            <div id="widget-file-explorer" class="widget"><h3>File Explorer</h3><p><em>No file open</em></p></div>
+        </div>
+        <div class="panel-widget" data-for="widget-code-explorer">
+            <div id="widget-code-explorer" class="widget"><h3>Code Explorer</h3><p><em>No files open</em></p></div>
         </div>
     </div>
-    <div id="input-area">
-        <form ws-send>
-            <fieldset id="input-fieldset">
-                <input type="text" name="user_input" placeholder="Type a message..." autocomplete="off" />
-                <button type="submit">Send</button>
-            </fieldset>
-        </form>
+    <div id="chat-area">
+        <div id="main">
+            <div id="widget-conversation-log" class="widget"><h3>Conversation</h3></div>
+            <div id="thinking">
+                <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+                <span>Thinking...</span>
+            </div>
+        </div>
+        <div id="input-area">
+            <form ws-send>
+                <fieldset id="input-fieldset">
+                    <input type="text" name="user_input" placeholder="Type a message..." autocomplete="off" />
+                    <button type="submit">Send</button>
+                </fieldset>
+            </form>
+        </div>
     </div>
     <script>
+        /* Indeterminate checkbox support */
         function setIndeterminate() {
             document.querySelectorAll('[data-indeterminate]').forEach(function(cb) {
                 cb.indeterminate = true;
@@ -249,6 +344,7 @@
         document.body.addEventListener('htmx:oobAfterSwap', setIndeterminate);
         document.body.addEventListener('htmx:wsAfterMessage', setIndeterminate);
 
+        /* WebSocket reference for widget events */
         var _calipsoWs = null;
         document.body.addEventListener('htmx:wsOpen', function(e) {
             _calipsoWs = e.detail.socketWrapper;
@@ -260,6 +356,54 @@
                 }));
             }
         }
+
+        /* Notification badges on OOB widget updates.
+           Skip the first full WS message (initial state) — only badge on subsequent updates. */
+        var _wsMessageCount = 0;
+        document.body.addEventListener('htmx:wsAfterMessage', function() {
+            _wsMessageCount++;
+        });
+        document.body.addEventListener('htmx:oobAfterSwap', function(e) {
+            if (_wsMessageCount <= 1) return;
+            var id = e.detail.target && e.detail.target.id;
+            if (!id || id === 'widget-conversation-log') return;
+            /* Don't badge if this tab is currently open */
+            if (activePanel === id) return;
+            var btn = document.querySelector('#activity-bar button[data-panel="' + id + '"]');
+            if (btn) btn.querySelector('.badge').classList.add('visible');
+        });
+
+        /* Activity bar toggle logic */
+        var activePanel = null;
+        function getWrapper(panelId) {
+            return document.querySelector('.panel-widget[data-for="' + panelId + '"]');
+        }
+        document.getElementById('activity-bar').addEventListener('click', function(e) {
+            var btn = e.target.closest('button[data-panel]');
+            if (!btn) return;
+            var panelId = btn.getAttribute('data-panel');
+            var sidePanel = document.getElementById('side-panel');
+
+            if (activePanel === panelId) {
+                /* Close panel */
+                btn.classList.remove('active');
+                sidePanel.classList.add('hidden');
+                getWrapper(panelId).classList.remove('active');
+                activePanel = null;
+            } else {
+                /* Deactivate previous */
+                if (activePanel) {
+                    document.querySelector('#activity-bar button.active').classList.remove('active');
+                    getWrapper(activePanel).classList.remove('active');
+                }
+                /* Activate new */
+                btn.classList.add('active');
+                btn.querySelector('.badge').classList.remove('visible');
+                sidePanel.classList.remove('hidden');
+                getWrapper(panelId).classList.add('active');
+                activePanel = panelId;
+            }
+        });
     </script>
 </body>
 </html>

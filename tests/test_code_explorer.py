@@ -5,7 +5,11 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic_ai import models
 
-from calipso.widgets.code_explorer import CodeExplorer, _strip_comments
+from calipso.widgets.code_explorer import (
+    CodeExplorer,
+    _extract_signatures,
+    _strip_comments,
+)
 
 models.ALLOW_MODEL_REQUESTS = False
 pytestmark = pytest.mark.anyio
@@ -32,7 +36,27 @@ class Calculator:
 """
 
 
-def _mock_summarizer_run(output: str = "summarized"):
+_SUMMARIZER_OUTPUT = """\
+def greet(name: str) -> str:
+    [...REDACTED...] # builds and returns a greeting string
+
+class Calculator:
+    [...REDACTED...] # a simple calculator
+
+    def add(self, a: int, b: int) -> int:
+        [...REDACTED...] # returns the sum of a and b
+
+    def multiply(self, a: int, b: int) -> int:
+        [...REDACTED...] # returns the product of a and b
+"""
+
+_QUERY_OUTPUT = """\
+def greet(name: str) -> str:
+    [...REDACTED...] # builds and returns a greeting string
+"""
+
+
+def _mock_summarizer_run(output: str = _SUMMARIZER_OUTPUT):
     """Create a mock that replaces _summarizer.run() with a canned result."""
     mock_result = AsyncMock()
     mock_result.output = output
@@ -43,7 +67,7 @@ def _mock_summarizer_run(output: str = "summarized"):
 def explorer():
     """Create a CodeExplorer with a mocked summarizer."""
     w = CodeExplorer()
-    w._summarizer.run = _mock_summarizer_run("summarized")
+    w._summarizer.run = _mock_summarizer_run()
     return w
 
 
@@ -63,7 +87,8 @@ class TestOpenFile:
         result = await explorer.update("open_file", {"path": sample_file})
         assert sample_file in explorer.open_files
         assert sample_file in explorer.query_results
-        assert "summarized" in result
+        assert "def greet" in result
+        assert "[...REDACTED...]" in result
 
     async def test_open_nonexistent_file(self, explorer):
         result = await explorer.update("open_file", {"path": "/nonexistent.py"})
@@ -93,12 +118,13 @@ class TestCloseFile:
 class TestQuery:
     async def test_query_valid(self, explorer, sample_file):
         await explorer.update("open_file", {"path": sample_file})
-        explorer._summarizer.run = _mock_summarizer_run("query result")
+        explorer._summarizer.run = _mock_summarizer_run(_QUERY_OUTPUT)
         result = await explorer.update(
             "query", {"path": sample_file, "query": "(function_definition) @fn"}
         )
-        assert "query result" in result
-        assert explorer.query_results[sample_file] == "query result"
+        assert "def greet" in result
+        assert "[...REDACTED...]" in result
+        assert "[...REDACTED...]" in explorer.query_results[sample_file]
 
     async def test_query_invalid_syntax(self, explorer, sample_file):
         await explorer.update("open_file", {"path": sample_file})
@@ -136,7 +162,7 @@ class TestQueryAll:
         f2.write_bytes(b"def bar(): pass\n")
         await explorer.update("open_file", {"path": str(f1)})
         await explorer.update("open_file", {"path": str(f2)})
-        explorer._summarizer.run = _mock_summarizer_run("found")
+        explorer._summarizer.run = _mock_summarizer_run(_QUERY_OUTPUT)
         result = await explorer.update(
             "query_all", {"query": "(function_definition) @fn"}
         )
@@ -189,6 +215,73 @@ class TestCommentStripping:
         assert "return 1" in result
 
 
+# --- signature extraction ---
+
+
+class TestExtractSignatures:
+    def test_strips_leaked_code(self):
+        """Drops everything except signatures and comments."""
+        import tree_sitter
+        import tree_sitter_python as tspython
+
+        lang = tree_sitter.Language(tspython.language())
+        parser = tree_sitter.Parser(lang)
+        # Simulate a summarizer that leaked code
+        llm_output = (
+            b"import os\n\n"
+            b"def foo(x: int) -> str:\n"
+            b"    [...REDACTED...] # does something\n"
+            b"    leaked = True\n\n"
+            b"class Bar:\n"
+            b"    [...REDACTED...] # a class\n"
+            b"    x = 42\n\n"
+            b"    def method(self) -> None:\n"
+            b"        [...REDACTED...] # a method\n"
+            b"        return leaked\n\n"
+            b"y = 99\n"
+        )
+        result = _extract_signatures(llm_output, parser)
+        # Signatures and comments kept
+        assert "def foo(x: int) -> str:" in result
+        assert "[...REDACTED...] # does something" in result
+        assert "class Bar:" in result
+        assert "[...REDACTED...] # a class" in result
+        assert "def method(self) -> None:" in result
+        assert "[...REDACTED...] # a method" in result
+        # Leaked code stripped
+        assert "import os" not in result
+        assert "leaked = True" not in result
+        assert "x = 42" not in result
+        assert "return leaked" not in result
+        assert "y = 99" not in result
+
+    def test_handles_decorated_functions(self):
+        import tree_sitter
+        import tree_sitter_python as tspython
+
+        lang = tree_sitter.Language(tspython.language())
+        parser = tree_sitter.Parser(lang)
+        llm_output = (
+            b"@staticmethod\ndef helper() -> None:\n    [...REDACTED...] # helps\n"
+        )
+        result = _extract_signatures(llm_output, parser)
+        assert "@staticmethod" in result
+        assert "def helper() -> None:" in result
+        assert "[...REDACTED...] # helps" in result
+
+    def test_no_comment_still_redacted(self):
+        """When the summarizer omits the comment, [...REDACTED...] is still added."""
+        import tree_sitter
+        import tree_sitter_python as tspython
+
+        lang = tree_sitter.Language(tspython.language())
+        parser = tree_sitter.Parser(lang)
+        llm_output = b"def bare() -> None:\n    pass\n"
+        result = _extract_signatures(llm_output, parser)
+        assert "def bare() -> None:" in result
+        assert "[...REDACTED...]" in result
+
+
 # --- view_messages ---
 
 
@@ -204,9 +297,8 @@ class TestViewMessages:
         msgs = list(explorer.view_messages())
         content = msgs[0].parts[0].content
         assert sample_file in content
-        assert "summarized" in content
+        assert "def greet" in content
         assert "REDACTED" in content
-        assert "redacted" in content.lower()
 
 
 # --- view_html ---

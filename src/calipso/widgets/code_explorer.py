@@ -127,7 +127,7 @@ class CodeExplorer(Widget):
                 "",
                 "**All code bodies have been redacted.** "
                 "Signatures are shown verbatim; bodies are replaced with "
-                '`[...REDACTED...]` followed by a description. '
+                "`[...REDACTED...]` followed by a description. "
                 "Comments and docstrings have been removed.",
                 "",
                 f"{len(self.open_files)} file(s) open:",
@@ -226,8 +226,9 @@ class CodeExplorer(Widget):
             code_parts.append(text)
         raw_code = "\n\n".join(code_parts)
         result = await self._summarizer.run(raw_code)
-        self.query_results[path] = result.output
-        return f"{path}:\n{result.output}"
+        cleaned = _extract_signatures(result.output.encode(), self._parser)
+        self.query_results[path] = cleaned
+        return f"{path}:\n{cleaned}"
 
     async def _query_all(self, query_str: str) -> str:
         if not self.open_files:
@@ -237,6 +238,86 @@ class CodeExplorer(Widget):
             result = await self._query(path, query_str)
             results.append(result)
         return "\n\n".join(results)
+
+
+def _extract_signatures(source: bytes, parser: tree_sitter.Parser) -> str:
+    """Parse summarizer output and keep only signatures and comments.
+
+    Strips any leaked code bodies the summarizer may have left in. For each
+    function/class definition, keeps the signature line and any comment nodes
+    from the body (which contain the [...REDACTED...] descriptions). Nested
+    definitions are processed recursively.
+    """
+    tree = parser.parse(source)
+    lines: list[str] = []
+    for child in tree.root_node.children:
+        if child.type in (
+            "function_definition",
+            "class_definition",
+            "decorated_definition",
+        ):
+            lines.extend(_format_def(child, source, indent=""))
+        elif child.type == "comment":
+            lines.append(child.text.decode())
+    return "\n".join(lines)
+
+
+def _format_def(node: tree_sitter.Node, source: bytes, indent: str) -> list[str]:
+    """Format a function/class/decorated definition as signature + comments."""
+    if node.type == "decorated_definition":
+        lines: list[str] = []
+        for child in node.children:
+            if child.type == "decorator":
+                lines.append(
+                    indent + source[child.start_byte : child.end_byte].decode().strip()
+                )
+            elif child.type in ("function_definition", "class_definition"):
+                lines.extend(_format_def(child, source, indent))
+        return lines
+
+    # function_definition or class_definition
+    block_node = None
+    for child in node.children:
+        if child.type == "block":
+            block_node = child
+            break
+
+    # Signature = everything from node start to the block
+    if block_node:
+        sig = source[node.start_byte : block_node.start_byte].decode().rstrip()
+    else:
+        sig = source[node.start_byte : node.end_byte].decode().rstrip()
+    if not sig.endswith(":"):
+        sig += ":"
+
+    lines = [indent + sig.strip()]
+    body_indent = indent + "    "
+
+    if block_node:
+        comments: list[str] = []
+        nested: list[tree_sitter.Node] = []
+        for child in block_node.children:
+            if child.type == "comment":
+                comments.append(child.text.decode())
+            elif child.type in (
+                "function_definition",
+                "class_definition",
+                "decorated_definition",
+            ):
+                nested.append(child)
+
+        if comments:
+            lines.append(body_indent + "[...REDACTED...] " + comments[0])
+            for c in comments[1:]:
+                lines.append(body_indent + c)
+        else:
+            lines.append(body_indent + "[...REDACTED...]")
+
+        for n in nested:
+            lines.append("")
+            lines.extend(_format_def(n, source, body_indent))
+
+    return lines
 
 
 def _strip_comments(node: tree_sitter.Node, source: bytes) -> str:

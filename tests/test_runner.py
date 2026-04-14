@@ -24,7 +24,7 @@ async def test_simple_text_response():
         return ModelResponse(parts=[TextPart(content="Hello from Calipso!")])
 
     model = FunctionModel(respond)
-    ctx = Context(children=[SystemPrompt()], conversation_log=ConversationLog())
+    ctx = Context(system_prompt=SystemPrompt(), conversation_log=ConversationLog())
 
     result = await run_turn(model, ctx, "Hi")
     assert result == "Hello from Calipso!"

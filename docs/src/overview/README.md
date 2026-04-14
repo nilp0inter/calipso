@@ -17,11 +17,12 @@ Everything the model sees is composed from **widgets** — Elm Architecture comp
 ```mermaid
 %%{init: {'flowchart': {'curve': 'natural'}}}%%
 flowchart TB
-    Context["Context\n(root widget)"] -- "yield from" --> SP["SystemPrompt"]
-    Context -- "yield from" --> Goal["Goal"]
-    Context -- "yield from" --> TL["TaskList"]
-    Context -- "yield from" --> AL["ActionLog"]
-    Context -- "yield from" --> Conv["Conversation"]
+    Context["Context\n(root widget)"]
+    Context -- "1. system_prompt" --> SP["SystemPrompt"]
+    Context -- "2. conversation_log" --> CL["ConversationLog"]
+    Context -- "3. children (state panels)" --> AgentsMd["AgentsMd"]
+    Context -- "3. children (state panels)" --> Goal["Goal"]
+    Context -- "3. children (state panels)" --> TL["TaskList"]
     Context -- "view_messages()\nview_tools()" --> Runner["Runner"]
     Runner -- "Model.request()" --> LLM["LLM"]
     LLM -- "tool calls" --> Runner
@@ -47,4 +48,6 @@ The runner is a thin agentic loop that only talks to the Context:
 
 ## Current state
 
-The agent has a CLI entry point and four widgets: `SystemPrompt` (static text), `Goal` (directional — set/clear), `TaskList` (organizational — CRUD), and `ConversationLog` (manages user/assistant turns partitioned into segments with action log protocol enforcement — summarized segments render a model-provided summary, unsummarized segments render full messages).
+The agent has a CLI entry point and five widgets: `SystemPrompt` (static identity/framing text), `AgentsMd` (behavioral instructions loaded from `AGENTS.md`), `Goal` (directional — set/clear), `TaskList` (organizational — CRUD), and `ConversationLog` (manages user/assistant turns partitioned into segments with action log protocol enforcement — summarized segments render a model-provided summary, unsummarized segments render full messages).
+
+The Context renders in a specific order: system prompt first, then conversation history, then state panels (wrapped in `CURRENT STATE` / `END STATE` markers) so the model sees live state right before generating its response.

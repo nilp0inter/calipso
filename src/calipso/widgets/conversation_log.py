@@ -15,7 +15,6 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     SystemPromptPart,
-    TextPart,
     UserPromptPart,
 )
 from pydantic_ai.tools import ToolDefinition
@@ -44,12 +43,14 @@ class Turn:
 
 
 _RULES = (
-    "## Action Log\n"
-    "Rules:\n"
-    "- You MUST call action_log_start before executing any other tool.\n"
-    "- After action_log_start, you may call one type of tool one or more times.\n"
-    "- You MUST call action_log_end before starting a new action.\n"
-    "- Violating these rules will result in an error."
+    "## Action Protocol\n"
+    "Every tool use must be wrapped in an action:\n"
+    "1. Call action_log_start with a description of what you will do.\n"
+    "2. Either call your tool(s) (one tool type per action, may repeat)"
+    " OR respond to the user with text.\n"
+    "3. Call action_log_end with a summary of what happened.\n"
+    "Calling tools outside an action will be rejected.\n"
+    "Empty actions (start then immediately end) will be rejected."
 )
 
 
@@ -119,7 +120,9 @@ class ConversationLog(Widget):
             yield ModelRequest(parts=[UserPromptPart(content=turn.user_message)])
             for segment in turn.segments:
                 if segment.summary is not None:
-                    yield ModelResponse(parts=[TextPart(content=segment.summary)])
+                    yield ModelRequest(
+                        parts=[SystemPromptPart(content=segment.summary)]
+                    )
                 else:
                     yield from segment.messages
 
@@ -139,6 +142,12 @@ class ConversationLog(Widget):
                 return (
                     "Cannot call action_log_end without an active action. "
                     "Call action_log_start first."
+                )
+            if self._action_tool_count == 0:
+                return (
+                    "Cannot call action_log_end without doing anything. "
+                    "Either call a tool or respond to the user first, "
+                    "then end the action."
                 )
             return None
         if self._active_action is None:

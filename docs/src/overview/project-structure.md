@@ -8,14 +8,15 @@ calipso/
 │   ├── model.py              # Model/provider setup
 │   ├── cli.py                # CLI entry point
 │   └── widgets/              # Widget modules
-│       ├── system_prompt.py  # Static text widget
+│       ├── system_prompt.py  # Identity + workspace framing
+│       ├── agents_md.py      # Behavioral instructions from AGENTS.md
 │       ├── goal.py           # Goal widget
 │       ├── task_list.py      # TaskList widget
-│       ├── action_log.py     # ActionLog widget
-│       ├── conversation.py   # Conversation widget
+│       ├── conversation_log.py # Conversation + action log protocol
 │       └── context.py        # Root context widget (composes all)
 ├── tests/                    # Test suite (pytest + anyio)
 ├── docs/src/                 # mdBook documentation source
+├── AGENTS.md                 # Agent behavioral instructions (loaded by AgentsMd widget)
 ├── flake.nix                 # Nix devShell (CI + dev tiers)
 ├── Taskfile.yml              # Task automation
 ├── pyproject.toml            # Python project metadata and dependencies

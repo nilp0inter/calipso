@@ -23,7 +23,8 @@ models.ALLOW_MODEL_REQUESTS = False
 class TestContextComposition:
     def test_view_messages_composes_children(self):
         ctx = Context(
-            children=[SystemPrompt(text="Hello"), Goal(text="Win")],
+            system_prompt=SystemPrompt(text="Hello"),
+            children=[Goal(text="Win")],
             conversation_log=ConversationLog(),
         )
         msgs = list(ctx.view_messages())
@@ -56,6 +57,28 @@ class TestContextComposition:
             for m in msgs
             for p in m.parts
         )
+
+    def test_state_panels_appear_after_conversation(self):
+        ctx = Context(
+            system_prompt=SystemPrompt(text="Identity"),
+            children=[Goal(text="Win")],
+            conversation_log=ConversationLog(),
+        )
+        ctx.add_user_message("Hello")
+        msgs = list(ctx.view_messages())
+        contents = []
+        for m in msgs:
+            if isinstance(m, ModelRequest):
+                for p in m.parts:
+                    if isinstance(p, SystemPromptPart):
+                        contents.append(p.content)
+
+        # Identity comes first
+        assert "Identity" in contents[0]
+        # State markers wrap the panels at the end
+        assert "CURRENT STATE" in contents[-3]
+        assert "Win" in contents[-2]
+        assert "END STATE" in contents[-1]
 
 
 class TestContextDispatch:

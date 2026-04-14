@@ -39,9 +39,9 @@ class Goal(Widget):
 
     def view_messages(self) -> Iterator[ModelMessage]:
         if self.text is None:
-            text = "Goal: No goal set"
+            text = "## Goal\nNo goal set"
         else:
-            text = f"Goal: {self.text}"
+            text = f"## Goal\n{self.text}"
         yield ModelRequest(parts=[SystemPromptPart(content=text)])
 
     def view_tools(self) -> Iterator[ToolDefinition]:

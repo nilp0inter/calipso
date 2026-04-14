@@ -8,6 +8,7 @@ import httpx
 from calipso.model import create_http_client, create_model
 from calipso.runner import run_turn_sync
 from calipso.widgets import (
+    AgentsMd,
     Context,
     ConversationLog,
     Goal,
@@ -72,8 +73,9 @@ def main():
     model = create_model(http_client=http_client)
 
     context = Context(
+        system_prompt=SystemPrompt(),
         children=[
-            SystemPrompt(),
+            AgentsMd(),
             Goal(),
             TaskList(),
         ],

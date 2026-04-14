@@ -34,11 +34,12 @@ Everything in the agent's context is a widget — an Elm-inspired component with
 
 | Widget | Source | State | DSL (tools) | Renders |
 |---|---|---|---|---|
-| **SystemPrompt** | `src/calipso/widgets/system_prompt.py` | None | None | Static instruction text |
-| **Goal** | `src/calipso/widgets/goal.py` | Current objective text | `set_goal`, `clear_goal` | Goal text in instructions |
-| **TaskList** | `src/calipso/widgets/task_list.py` | Tasks with statuses (`pending`, `in_progress`, `done`) | `create_task`, `update_task_status`, `remove_task` | Compact checklist with status icons |
-| **ConversationLog** | `src/calipso/widgets/conversation_log.py` | Turns with segmented messages + protocol state | `action_log_start`, `action_log_end` | Segments: summarized segments render model-provided summary, unsummarized render full messages |
-| **Context** | `src/calipso/widgets/context.py` | Child widgets | None | Composes all children via `yield from`, dispatches tool calls |
+| **SystemPrompt** | `src/calipso/widgets/system_prompt.py` | None | None | Identity and workspace framing text |
+| **AgentsMd** | `src/calipso/widgets/agents_md.py` | None | None | Behavioral instructions loaded from `AGENTS.md` on disk (silently skipped if missing) |
+| **Goal** | `src/calipso/widgets/goal.py` | Current objective text | `set_goal`, `clear_goal` | Goal text as `## Goal` panel |
+| **TaskList** | `src/calipso/widgets/task_list.py` | Tasks with statuses (`pending`, `in_progress`, `done`) | `create_task`, `update_task_status`, `remove_task` | Compact checklist as `## Tasks` panel |
+| **ConversationLog** | `src/calipso/widgets/conversation_log.py` | Turns with segmented messages + protocol state | `action_log_start`, `action_log_end` | Action protocol rules + conversation history; summarized segments render as system messages, unsummarized render full messages |
+| **Context** | `src/calipso/widgets/context.py` | system_prompt + children (state panels) + conversation_log | None | Composes: system prompt first, conversation log second, state panels last (wrapped in `CURRENT STATE` markers), dispatches tool calls |
 
 ### Planned
 

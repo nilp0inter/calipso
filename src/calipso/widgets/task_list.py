@@ -89,12 +89,12 @@ class TaskList(Widget):
 
     def view_messages(self) -> Iterator[ModelMessage]:
         if not self.tasks:
-            text = "Tasks: (none)"
+            text = "## Tasks\n(none)"
         else:
-            lines = ["Tasks:"]
+            lines = ["## Tasks"]
             for task in self.tasks:
                 icon = _STATUS_ICONS[task.status]
-                lines.append(f"  {icon} {task.id}. {task.description}")
+                lines.append(f"{icon} {task.id}. {task.description}")
             text = "\n".join(lines)
         yield ModelRequest(parts=[SystemPromptPart(content=text)])
 

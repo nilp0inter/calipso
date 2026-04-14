@@ -1,5 +1,7 @@
 """Tests for individual widgets — view rendering and update logic."""
 
+from pathlib import Path
+
 from pydantic_ai import models
 from pydantic_ai.messages import (
     ModelRequest,
@@ -9,6 +11,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
+from calipso.widgets.agents_md import AgentsMd
 from calipso.widgets.conversation_log import ConversationLog
 from calipso.widgets.goal import Goal
 from calipso.widgets.system_prompt import SystemPrompt
@@ -31,6 +34,36 @@ class TestSystemPrompt:
 
     def test_view_tools_is_empty(self):
         w = SystemPrompt()
+        assert list(w.view_tools()) == []
+
+
+# --- AgentsMd ---
+
+
+class TestAgentsMd:
+    def test_loads_file(self, tmp_path: Path):
+        md = tmp_path / "AGENTS.md"
+        md.write_text("Be concise.")
+        w = AgentsMd(path=md)
+        msgs = list(w.view_messages())
+        assert len(msgs) == 1
+        assert isinstance(msgs[0], ModelRequest)
+        assert msgs[0].parts[0].content == "Be concise."
+
+    def test_missing_file_yields_nothing(self, tmp_path: Path):
+        w = AgentsMd(path=tmp_path / "nonexistent.md")
+        msgs = list(w.view_messages())
+        assert msgs == []
+
+    def test_empty_file_yields_nothing(self, tmp_path: Path):
+        md = tmp_path / "AGENTS.md"
+        md.write_text("   \n  ")
+        w = AgentsMd(path=md)
+        msgs = list(w.view_messages())
+        assert msgs == []
+
+    def test_view_tools_is_empty(self, tmp_path: Path):
+        w = AgentsMd(path=tmp_path / "AGENTS.md")
         assert list(w.view_tools()) == []
 
 
@@ -126,7 +159,7 @@ class TestConversationLog:
         msgs = list(w.view_messages())
         # Should have the rules as a system prompt
         assert len(msgs) == 1
-        assert "Action Log" in msgs[0].parts[0].content
+        assert "Action Protocol" in msgs[0].parts[0].content
 
     def test_add_user_message_creates_turn(self):
         w = ConversationLog()
@@ -191,12 +224,15 @@ class TestConversationLog:
         msgs = list(w.view_messages())
         # The inner response should NOT appear
         assert inner_response not in msgs
-        # The summary should appear as a ModelResponse
+        # The summary should appear as a system prompt (not assistant message)
         summaries = [
             m
             for m in msgs
-            if isinstance(m, ModelResponse)
-            and any(isinstance(p, TextPart) and "Done!" in p.content for p in m.parts)
+            if isinstance(m, ModelRequest)
+            and any(
+                isinstance(p, SystemPromptPart) and "Done!" in p.content
+                for p in m.parts
+            )
         ]
         assert len(summaries) == 1
 
@@ -233,11 +269,21 @@ class TestConversationLogProtocol:
         assert error is not None
         assert "tool_a" in error
 
-    def test_protocol_start_then_end(self):
+    def test_protocol_rejects_empty_action(self):
         w = ConversationLog()
         w.add_user_message("test")
         w.update("action_log_start", {"description": "Read file"})
         assert w._active_action == "Read file"
+        error = w.check_protocol("action_log_end")
+        assert error is not None
+        assert "without doing anything" in error
+
+    def test_protocol_start_tool_then_end(self):
+        w = ConversationLog()
+        w.add_user_message("test")
+        w.update("action_log_start", {"description": "Read file"})
+        w.track_tool("read_file")
+        assert w.check_protocol("action_log_end") is None
         result = w.update("action_log_end", {"result": "File read OK"})
         assert "logged" in result.lower()
         assert w._active_action is None

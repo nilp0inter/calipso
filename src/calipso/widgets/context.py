@@ -5,13 +5,19 @@ from dataclasses import dataclass, field
 
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelRequest,
     ModelResponse,
+    SystemPromptPart,
     ToolCallPart,
 )
 from pydantic_ai.tools import ToolDefinition
 
 from calipso.widget import Widget
 from calipso.widgets.conversation_log import ConversationLog, Segment
+from calipso.widgets.system_prompt import SystemPrompt
+
+_STATE_BEGIN = "─── CURRENT STATE ───"
+_STATE_END = "─── END STATE ───"
 
 
 @dataclass
@@ -23,8 +29,14 @@ class Context(Widget):
     - Composing all child views via yield from
     - Dispatching tool calls to the owning widget
     - Enforcing cross-widget protocols (action log)
+
+    Layout order:
+    1. system_prompt (identity + framing)
+    2. conversation_log (action protocol rules + conversation history)
+    3. children (state panels, wrapped in markers)
     """
 
+    system_prompt: SystemPrompt = field(default_factory=SystemPrompt)
     children: list[Widget] = field(default_factory=list)
     conversation_log: ConversationLog = field(default_factory=ConversationLog)
     _tool_owners: dict[str, Widget] = field(
@@ -41,13 +53,17 @@ class Context(Widget):
                 self._tool_owners[tool_def.name] = widget
 
     def _all_widgets(self) -> Iterator[Widget]:
+        yield self.system_prompt
         yield from self.children
         yield self.conversation_log
 
     def view_messages(self) -> Iterator[ModelMessage]:
+        yield from self.system_prompt.view_messages()
+        yield from self.conversation_log.view_messages()
+        yield ModelRequest(parts=[SystemPromptPart(content=_STATE_BEGIN)])
         for widget in self.children:
             yield from widget.view_messages()
-        yield from self.conversation_log.view_messages()
+        yield ModelRequest(parts=[SystemPromptPart(content=_STATE_END)])
 
     def view_tools(self) -> Iterator[ToolDefinition]:
         for widget in self._all_widgets():

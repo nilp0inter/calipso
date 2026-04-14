@@ -14,6 +14,7 @@ from calipso.widgets import (
     CodeExplorer,
     Context,
     ConversationLog,
+    FileExplorer,
     Goal,
     SystemPrompt,
     TaskList,
@@ -82,6 +83,7 @@ async def async_main():
             Goal(),
             TaskList(),
             CodeExplorer(),
+            FileExplorer(),
         ],
         conversation_log=ConversationLog(),
     )

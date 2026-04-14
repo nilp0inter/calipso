@@ -16,6 +16,7 @@ from pydantic_ai.messages import (
 
 from calipso.widgets.agents_md import AgentsMd
 from calipso.widgets.conversation_log import ConversationLog
+from calipso.widgets.file_explorer import FileExplorer
 from calipso.widgets.goal import Goal
 from calipso.widgets.system_prompt import SystemPrompt
 from calipso.widgets.task_list import TaskList, TaskStatus
@@ -350,3 +351,99 @@ class TestConversationLogProtocol:
         result = await w.update("action_log_end", {"result": "File read OK"})
         assert "logged" in result.lower()
         assert w._active_action is None
+
+
+# --- FileExplorer ---
+
+
+class TestFileExplorer:
+    async def test_list_directory(self, tmp_path: Path):
+        w = FileExplorer()
+        sub = tmp_path / "subdir"
+        sub.mkdir()
+        (tmp_path / "file.txt").write_text("hello")
+        result = await w.update("list_directory", {"path": str(tmp_path)})
+        assert "subdir/" in result
+        assert "file.txt" in result
+        assert w.current_listing is not None
+
+    async def test_list_directory_not_a_dir(self, tmp_path: Path):
+        w = FileExplorer()
+        result = await w.update("list_directory", {"path": str(tmp_path / "nope")})
+        assert "Not a directory" in result
+
+    async def test_read_file(self, tmp_path: Path):
+        w = FileExplorer()
+        f = tmp_path / "readme.md"
+        f.write_text("# Hello")
+        result = await w.update("read_file", {"path": str(f)})
+        assert result == "# Hello"
+        assert w.open_file_path == str(f)
+        assert w.open_file_content == "# Hello"
+
+    async def test_read_file_rejects_python(self):
+        w = FileExplorer()
+        result = await w.update("read_file", {"path": "foo.py"})
+        assert "Code Explorer" in result
+        assert w.open_file_path is None
+
+    async def test_read_file_not_found(self):
+        w = FileExplorer()
+        result = await w.update("read_file", {"path": "/no/such/file.txt"})
+        assert "File not found" in result
+
+    async def test_close_read_file(self, tmp_path: Path):
+        w = FileExplorer()
+        f = tmp_path / "data.json"
+        f.write_text("{}")
+        await w.update("read_file", {"path": str(f)})
+        assert w.open_file_path is not None
+        result = await w.update("close_read_file", {})
+        assert "Closed" in result
+        assert w.open_file_path is None
+        assert w.open_file_content is None
+
+    async def test_close_read_file_when_none_open(self):
+        w = FileExplorer()
+        result = await w.update("close_read_file", {})
+        assert "No file is open" in result
+
+    def test_view_messages_empty(self):
+        w = FileExplorer()
+        msgs = list(w.view_messages())
+        assert len(msgs) == 1
+        assert "No file open" in msgs[0].parts[0].content
+
+    def test_view_messages_with_file(self):
+        w = FileExplorer()
+        w.open_file_path = "test.txt"
+        w.open_file_content = "content here"
+        msgs = list(w.view_messages())
+        text = msgs[0].parts[0].content
+        assert "`test.txt`" in text
+        assert "content here" in text
+
+    def test_view_html_empty(self):
+        w = FileExplorer()
+        html = w.view_html()
+        assert "No file open" in html
+        assert w.widget_id() in html
+
+    def test_view_html_with_file(self):
+        w = FileExplorer()
+        w.open_file_path = "test.txt"
+        w.open_file_content = "hello"
+        html = w.view_html()
+        assert "test.txt" in html
+        assert "hello" in html
+        assert "close_read_file" in html
+
+    def test_view_tools(self):
+        w = FileExplorer()
+        tools = list(w.view_tools())
+        names = {t.name for t in tools}
+        assert names == {"list_directory", "read_file", "close_read_file"}
+
+    def test_frontend_tools(self):
+        w = FileExplorer()
+        assert w.frontend_tools() == {"close_read_file"}

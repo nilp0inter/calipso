@@ -43,7 +43,7 @@ Each turn's raw HTTP request/response payloads are saved to `prompts/NNNN.json`,
 
 **Source:** `src/calipso/static/index.html`
 
-A single-page htmx application served by the dashboard server. Uses the htmx WebSocket extension to connect to `/ws`. The layout has a sidebar (SystemPrompt, AgentsMd, Goal, TaskList) and a main area (ConversationLog) with an input bar. Widget HTML is swapped in place by element ID using `hx-swap-oob`. A thinking indicator with animated dots appears during turns while the input is disabled. A global `sendWidgetEvent(toolName, args)` JS function sends `widget_event` messages over the WebSocket, allowing widgets to render interactive HTML (buttons, checkboxes, inputs) that trigger their own updates without an LLM round-trip.
+A single-page htmx application served by the dashboard server. Uses the htmx WebSocket extension to connect to `/ws`. The layout is a three-column grid: a sidebar (SystemPrompt, AgentsMd, Goal, TaskList), a code panel (FileExplorer, CodeExplorer), and a main area (ConversationLog) with an input bar. Widget HTML is swapped in place by element ID using `hx-swap-oob`. A thinking indicator with animated dots appears during turns while the input is disabled. A global `sendWidgetEvent(toolName, args)` JS function sends `widget_event` messages over the WebSocket, allowing widgets to render interactive HTML (buttons, checkboxes, inputs) that trigger their own updates without an LLM round-trip.
 
 ## Widgets
 
@@ -61,6 +61,7 @@ Everything in the agent's context is a widget — an Elm-inspired component with
 | **TaskList** | `src/calipso/widgets/task_list.py` | Tasks with statuses (`pending`, `in_progress`, `done`) | `create_task`, `update_task_status`\*, `remove_task`\* | Compact checklist as `## Tasks` panel with interactive checkboxes and remove buttons |
 | **ConversationLog** | `src/calipso/widgets/conversation_log.py` | Turns with segmented messages + protocol state | `action_log_start`, `action_log_end` | Action protocol rules + conversation history; summarized segments render summary + tool call/return messages, unsummarized render full messages |
 | **CodeExplorer** | `src/calipso/widgets/code_explorer.py` | Open files with cached parse trees, query results per file | `open_file`, `close_file`\*, `query`, `query_all` | Open files list + tree-sitter query results (signatures + `[...REDACTED...]` body summaries) |
+| **FileExplorer** | `src/calipso/widgets/file_explorer.py` | Current directory listing, open file path + content | `list_directory`, `read_file`, `close_read_file`\* | Directory listing + open file content; rejects `.py` files (handled by CodeExplorer) |
 | **Context** | `src/calipso/widgets/context.py` | system_prompt + children (state panels) + conversation_log + HTML cache | None | Composes: system prompt first, conversation log second, state panels last (wrapped in `CURRENT STATE` markers as user messages), dispatches tool calls and frontend widget events, detects changed widgets via `changed_html()` |
 
 \* = frontend-callable (invocable from the browser without LLM involvement)

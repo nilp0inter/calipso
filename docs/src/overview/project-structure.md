@@ -17,6 +17,7 @@ calipso/
 │       ├── goal.py           # Goal widget
 │       ├── task_list.py      # TaskList widget
 │       ├── code_explorer.py  # Tree-sitter code reading + summarization
+│       ├── file_explorer.py  # Filesystem navigation + non-Python file reading
 │       ├── conversation_log.py # Conversation + action log protocol
 │       └── context.py        # Root context widget (composes all)
 ├── tests/                    # Test suite (pytest + anyio)

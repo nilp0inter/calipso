@@ -197,6 +197,21 @@
             font-size: 0.8rem;
             line-height: 1.4;
         }
+        /* File Explorer directory listing */
+        .dir-listing {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            font-size: 0.85rem;
+        }
+        .dir-listing li {
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+            cursor: default;
+        }
+        .dir-listing li:hover { background: #f0f0f0; }
+        .dir-listing .entry-dir { font-weight: 500; }
+        .dir-listing .entry-file { color: #555; }
     </style>
 </head>
 <body hx-ext="ws" ws-connect="/ws">
@@ -207,6 +222,7 @@
         <div id="widget-task-list" class="widget"><h3>Tasks</h3></div>
     </div>
     <div id="code-panel">
+        <div id="widget-file-explorer" class="widget"><h3>File Explorer</h3><p><em>No file open</em></p></div>
         <div id="widget-code-explorer" class="widget"><h3>Code Explorer</h3><p><em>No files open</em></p></div>
     </div>
     <div id="main">

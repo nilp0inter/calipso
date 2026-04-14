@@ -1,25 +1,50 @@
 # Architecture Overview
 
-Calipso is a Python CLI application built on Pydantic AI. The agent talks to an LLM and has a set of capabilities whose state is rendered into every prompt.
+Calipso is a context engineering library and CLI agent. It uses Pydantic AI's `Model` layer for provider-agnostic LLM communication but owns the agentic loop and prompt composition entirely.
 
 ```mermaid
 flowchart LR
     User((User)) <--> CLI["CLI\n(calipso)"]
-    CLI <--> Agent["Pydantic AI\nAgent"]
-    Agent <--> LLM["LLM\n(via OpenRouter)"]
+    CLI <--> Runner["Runner"]
+    Runner <--> Model["Pydantic AI\nModel"]
+    Model <--> LLM["LLM\n(via OpenRouter)"]
 ```
 
-## How capabilities fit in
+## Widgets and the Context
 
-Capabilities are Pydantic AI `AbstractCapability` subclasses. They are stateful programs that produce text via `get_instructions()`, and that text is injected into the agent's prompt. The agent manipulates capabilities by issuing DSL commands (exposed as tools via `get_toolset()`), which change the capability's internal state and therefore change what appears in the next prompt.
+Everything the model sees is composed from **widgets** — Elm Architecture components with state, view functions, and update handlers. Widgets compose via nesting: a parent widget calls child views with `yield from`, which naturally flattens (List monad join). The root widget is the **Context**, which composes all children into the final prompt.
 
 ```mermaid
+%%{init: {'flowchart': {'curve': 'natural'}}}%%
 flowchart TB
-    Agent["Agent"] -- "DSL command (tool call)" --> Capability["Capability"]
-    Capability -- "re-renders via get_instructions()" --> Prompt["Prompt"]
-    Prompt -- "visible to" --> Agent
+    Context["Context\n(root widget)"] -- "yield from" --> SP["SystemPrompt"]
+    Context -- "yield from" --> Goal["Goal"]
+    Context -- "yield from" --> TL["TaskList"]
+    Context -- "yield from" --> AL["ActionLog"]
+    Context -- "yield from" --> Conv["Conversation"]
+    Context -- "view_messages()\nview_tools()" --> Runner["Runner"]
+    Runner -- "Model.request()" --> LLM["LLM"]
+    LLM -- "tool calls" --> Runner
+    Runner -- "update()" --> Context
 ```
+
+Each widget:
+
+- **Holds state** as dataclass fields
+- **Renders via view functions** — generators yielding messages (`view_messages()`) or tool definitions (`view_tools()`)
+- **Handles updates** — tool calls dispatched by the Context mutate widget state
+
+Tools are not a separate concept — they are just another view (`view_tools() -> Iterator[ToolDefinition]`), composed the same way as messages. Compaction is a view decision: the widget always has full state, but the view decides what to show (expanded vs collapsed).
+
+## The Runner
+
+The runner is a thin agentic loop that only talks to the Context:
+
+1. Materialize `context.view_messages()` and `context.view_tools()`
+2. Call `Model.request()` with the composed prompt
+3. Pass the response to `context.handle_response()` which dispatches tool calls to owning widgets
+4. Loop while the model makes tool calls; return text when done
 
 ## Current state
 
-The agent has a CLI entry point and three capabilities: `SystemPrompt` (static text), `TaskList` (organizational — tracks tasks with create/update/remove tools), and `Goal` (directional — keeps the agent focused with set/clear tools). TaskList and Goal are the first DSL-bearing capabilities, demonstrating the pattern of stateful capabilities with tools that mutate internal state and dynamic `get_instructions()` rendering.
+The agent has a CLI entry point and five widgets: `SystemPrompt` (static text), `Goal` (directional — set/clear), `TaskList` (organizational — CRUD), `ActionLog` (protocol enforcement with collapsed summaries), and `Conversation` (manages user/assistant turns with compaction).

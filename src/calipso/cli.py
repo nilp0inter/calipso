@@ -1,13 +1,20 @@
+"""CLI entry point for Calipso."""
+
 import json
 from pathlib import Path
-from typing import Any
 
 import httpx
-from pydantic_ai import RunContext
-from pydantic_ai.capabilities import Hooks
-from pydantic_ai.messages import ToolCallPart
 
-from calipso.agent import create_agent, create_http_client
+from calipso.model import create_http_client, create_model
+from calipso.runner import run_turn_sync
+from calipso.widgets import (
+    ActionLog,
+    Context,
+    Conversation,
+    Goal,
+    SystemPrompt,
+    TaskList,
+)
 
 PROMPT_DIR = Path("prompts")
 
@@ -54,43 +61,25 @@ class WireCapture:
         self._pending_request = None
 
 
-def _make_cli_hooks() -> Hooks:
-    hooks = Hooks()
-
-    @hooks.on.after_model_request
-    async def print_tool_calls(ctx, *, request_context, response):
-        for part in response.parts:
-            if isinstance(part, ToolCallPart):
-                print(f"  -> {part.tool_name}({part.args_as_dict()})")
-        return response
-
-    @hooks.on.tool_execute_error
-    async def print_tool_error(
-        ctx: RunContext[Any],
-        *,
-        call: ToolCallPart,
-        tool_def,
-        args,
-        error,
-    ):
-        print(f"  !! {call.tool_name}: {error}")
-        raise error
-
-    return hooks
-
-
 def main():
     PROMPT_DIR.mkdir(exist_ok=True)
     turn_num = _next_num()
-    message_history = []
 
     capture = WireCapture()
     http_client = create_http_client(
         request_hook=capture.on_request,
         response_hook=capture.on_response,
     )
-    agent = create_agent(
-        http_client=http_client, extra_capabilities=[_make_cli_hooks()]
+    model = create_model(http_client=http_client)
+
+    context = Context(
+        children=[
+            SystemPrompt(),
+            Goal(),
+            TaskList(),
+        ],
+        conversation=Conversation(),
+        action_log=ActionLog(),
     )
 
     while True:
@@ -104,11 +93,10 @@ def main():
             continue
 
         capture.exchanges.clear()
-        result = agent.run_sync(user_input, message_history=message_history)
-        message_history.extend(result.new_messages())
+        output = run_turn_sync(model, context, user_input)
 
         out = PROMPT_DIR / f"{turn_num:04d}.json"
         out.write_text(json.dumps(capture.exchanges, indent=2))
         turn_num += 1
 
-        print(f"Calipso: {result.output}")
+        print(f"Calipso: {output}")

@@ -145,7 +145,7 @@ class Context:
 
         return tool_results, segment
 
-    def handle_widget_event(self, tool_name: str, args: dict) -> str | None:
+    async def handle_widget_event(self, tool_name: str, args: dict) -> str | None:
         """Handle a frontend-initiated widget event.
 
         Bypasses the action log protocol. Returns the update result,
@@ -154,4 +154,4 @@ class Context:
         owner = self._tool_owners.get(tool_name)
         if owner is None:
             return None
-        return owner.dispatch_ui(tool_name, args)
+        return await owner.dispatch_ui(tool_name, args)

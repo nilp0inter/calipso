@@ -14,13 +14,15 @@ View functions return Iterator[T] — composition uses ``yield from``
 which naturally flattens nested iterators (List monad join).
 """
 
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
 import markdown as md_lib
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import ToolDefinition
+
+from calipso.cmd import Cmd, CmdEffect, CmdNone, CmdToolResult
 
 _md = md_lib.Markdown(extensions=["fenced_code", "tables"])
 
@@ -58,7 +60,7 @@ def _default_view_html(widget_id: str) -> Callable[[Any], str]:
     return _view_html
 
 
-async def _no_llm(_model: Any, _tool_name: str, _args: dict) -> Any:
+def _no_llm(_model: Any, _tool_name: str, _args: dict) -> Any:
     raise NotImplementedError("This widget does not handle LLM tool calls")
 
 
@@ -66,7 +68,7 @@ def _no_ui(_model: Any, _event_name: str, _args: dict) -> Any | None:
     return None
 
 
-def _no_update(_model: Any, _msg: Any) -> tuple[Any, str]:
+def _no_update(_model: Any, _msg: Any) -> tuple[Any, Cmd]:
     raise NotImplementedError("This widget does not handle updates")
 
 
@@ -86,11 +88,11 @@ class WidgetHandle:
 
     id: str
     _model: Any = field(repr=False)
-    _update_fn: Callable[[Any, Any], tuple[Any, str]] = field(repr=False)
+    _update_fn: Callable[[Any, Any], tuple[Any, Cmd]] = field(repr=False)
     _view_messages_fn: Callable[[Any], Iterator[ModelMessage]] = field(repr=False)
     _view_tools_fn: Callable[[Any], Iterator[ToolDefinition]] = field(repr=False)
     _view_html_fn: Callable[[Any], str] = field(repr=False)
-    _from_llm_fn: Callable[[Any, str, dict], Awaitable[Any]] = field(repr=False)
+    _from_llm_fn: Callable[[Any, str, dict], Any] = field(repr=False)
     _from_ui_fn: Callable[[Any, str, dict], Any | None] = field(repr=False)
     _frontend_tool_names: frozenset[str] = field(repr=False)
 
@@ -124,20 +126,40 @@ class WidgetHandle:
     # -- Dispatch methods ---------------------------------------------------
 
     async def dispatch_llm(self, tool_name: str, args: dict) -> str:
-        """Dispatch an LLM tool call: from_llm -> update.
+        """Dispatch an LLM tool call: from_llm -> update -> Cmd loop.
 
         ValueError raised by from_llm is caught and returned as the
         tool result string (validation errors at the boundary).
+        The Cmd loop executes effects and feeds results back into
+        update until a CmdRespond is reached.
         """
         try:
-            msg = await self._from_llm_fn(self._model, tool_name, args)
+            msg = self._from_llm_fn(self._model, tool_name, args)
         except ValueError as e:
             return str(e)
-        self._model, result = self._update_fn(self._model, msg)
-        return result
+        self._model, cmd = self._update_fn(self._model, msg)
+        return await self._execute_cmd(cmd)
 
-    def dispatch_ui(self, tool_name: str, args: dict) -> str | None:
-        """Dispatch a browser event: from_ui -> update.
+    async def _execute_cmd(self, cmd: Cmd) -> str:
+        """Execute the Cmd loop.
+
+        CmdNone — no response (returns empty string).
+        CmdRespond — returns the tool result text.
+        CmdEffect — executes effect, feeds result Msg to update, recurses.
+        """
+        match cmd:
+            case CmdNone():
+                return ""
+            case CmdToolResult(text=text):
+                return text
+            case CmdEffect(perform=perform, to_msg=to_msg):
+                data = await perform()
+                msg = to_msg(data)
+                self._model, next_cmd = self._update_fn(self._model, msg)
+                return await self._execute_cmd(next_cmd)
+
+    async def dispatch_ui(self, tool_name: str, args: dict) -> str | None:
+        """Dispatch a browser event: from_ui -> update -> Cmd loop.
 
         Returns None if the tool is not frontend-callable or not recognized.
         """
@@ -146,16 +168,17 @@ class WidgetHandle:
         msg = self._from_ui_fn(self._model, tool_name, args)
         if msg is None:
             return None
-        self._model, result = self._update_fn(self._model, msg)
-        return result
+        self._model, cmd = self._update_fn(self._model, msg)
+        return await self._execute_cmd(cmd)
 
-    def send(self, msg: Any) -> str:
+    def send(self, msg: Any) -> None:
         """Send a Msg directly, bypassing anticorruption layers.
 
         Standard Elm pattern: parent forwards messages to children.
+        Must produce CmdNone (no effect, no response).
         """
-        self._model, result = self._update_fn(self._model, msg)
-        return result
+        self._model, cmd = self._update_fn(self._model, msg)
+        assert isinstance(cmd, CmdNone), "send() must produce CmdNone"
 
 
 # ---------------------------------------------------------------------------
@@ -167,11 +190,11 @@ def create_widget(
     *,
     id: str,
     model: Any,
-    update: Callable[[Any, Any], tuple[Any, str]] = _no_update,
+    update: Callable[[Any, Any], tuple[Any, Cmd]] = _no_update,
     view_messages: Callable[[Any], Iterator[ModelMessage]] = _no_messages,
     view_tools: Callable[[Any], Iterator[ToolDefinition]] = _no_tools,
     view_html: Callable[[Any], str] | None = None,
-    from_llm: Callable[[Any, str, dict], Awaitable[Any]] = _no_llm,
+    from_llm: Callable[[Any, str, dict], Any] = _no_llm,
     from_ui: Callable[[Any, str, dict], Any | None] = _no_ui,
     frontend_tools: frozenset[str] = frozenset(),
 ) -> WidgetHandle:

@@ -66,22 +66,22 @@ def _mock_summarizer_run(output: str = _SUMMARIZER_OUTPUT):
 def explorer():
     """Create a CodeExplorer handle with a mocked summarizer.
 
-    We create the handle normally, then patch the from_llm closure's
-    summarizer by replacing the closure itself.
+    We create the handle normally, then patch the update closure's
+    summarizer by replacing _update_fn with one using a mock.
     """
     import tree_sitter
 
     from calipso.widgets.code_explorer import (
         PY_LANGUAGE,
-        _create_from_llm,
+        _create_update,
     )
 
     w = create_code_explorer()
-    # Replace the from_llm closure with one using a mocked summarizer
+    # Replace the update closure with one using a mocked summarizer
     parser = tree_sitter.Parser(PY_LANGUAGE)
     mock_summarizer = AsyncMock()
     mock_summarizer.run = _mock_summarizer_run()
-    w._from_llm_fn = _create_from_llm(parser, mock_summarizer)
+    w._update_fn = _create_update(parser, mock_summarizer)
     w._mock_summarizer = mock_summarizer  # stash for test access
     return w
 
@@ -134,13 +134,13 @@ class TestQuery:
     async def test_query_valid(self, explorer, sample_file):
         await explorer.dispatch_llm("open_file", {"path": sample_file})
         explorer._mock_summarizer.run = _mock_summarizer_run(_QUERY_OUTPUT)
-        # Re-create from_llm with updated mock
+        # Re-create update with updated mock
         import tree_sitter
 
-        from calipso.widgets.code_explorer import PY_LANGUAGE, _create_from_llm
+        from calipso.widgets.code_explorer import PY_LANGUAGE, _create_update
 
         parser = tree_sitter.Parser(PY_LANGUAGE)
-        explorer._from_llm_fn = _create_from_llm(parser, explorer._mock_summarizer)
+        explorer._update_fn = _create_update(parser, explorer._mock_summarizer)
         result = await explorer.dispatch_llm(
             "query", {"path": sample_file, "query": "(function_definition) @fn"}
         )

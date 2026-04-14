@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import ToolDefinition
 
+from calipso.cmd import Cmd, none, tool_result
 from calipso.widget import WidgetHandle, create_widget, render_md
 
 # --- Supporting types ---
@@ -133,25 +134,25 @@ _RULES = (
 
 def update(
     model: ConversationLogModel, msg: ConversationLogMsg
-) -> tuple[ConversationLogModel, str]:
+) -> tuple[ConversationLogModel, Cmd]:
     match msg:
         case UserMessageReceived(text=text):
             model.turns.append(Turn(user_message=text))
-            return model, ""
+            return model, none
 
         case ResponseReceived(response=response, segment=segment):
             segment.messages.append(response)
-            return model, ""
+            return model, none
 
         case ToolResultsReceived(request=request, segment=segment):
             segment.messages.append(request)
-            return model, ""
+            return model, none
 
         case ActionLogStart(description=desc):
             model.active_action = desc
             model.allowed_tool = None
             model.action_tool_count = 0
-            return model, f"Action started: {desc}"
+            return model, tool_result(f"Action started: {desc}")
 
         case ActionLogEnd(result=result):
             summary = (
@@ -165,14 +166,14 @@ def update(
             model.active_action = None
             model.allowed_tool = None
             model.action_tool_count = 0
-            return model, "Action logged."
+            return model, tool_result("Action logged.")
 
         case ToolTracked(tool_name=name):
             if model.active_action is not None:
                 model.action_tool_count += 1
                 if model.allowed_tool is None:
                     model.allowed_tool = name
-            return model, ""
+            return model, none
 
 
 # --- Pure query functions ---
@@ -370,7 +371,7 @@ def _render_message(msg: ModelMessage) -> list[str]:
 # --- Anticorruption layers ---
 
 
-async def from_llm(
+def from_llm(
     model: ConversationLogModel, tool_name: str, args: dict
 ) -> ConversationLogMsg:
     match tool_name:

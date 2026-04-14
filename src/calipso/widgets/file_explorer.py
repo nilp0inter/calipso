@@ -8,6 +8,7 @@ from pathlib import Path
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.tools import ToolDefinition
 
+from calipso.cmd import Cmd, Initiator, effect, for_initiator, tool_result
 from calipso.widget import WidgetHandle, create_widget
 
 # --- Model ---
@@ -50,11 +51,27 @@ class FileReadError:
 
 @dataclass(frozen=True)
 class CloseReadFile:
-    pass
+    initiator: Initiator
+
+
+@dataclass(frozen=True)
+class ListDirectoryRequested:
+    path: str
+
+
+@dataclass(frozen=True)
+class ReadFileRequested:
+    path: str
 
 
 FileExplorerMsg = (
-    DirectoryListed | DirectoryListError | FileRead | FileReadError | CloseReadFile
+    DirectoryListed
+    | DirectoryListError
+    | FileRead
+    | FileReadError
+    | CloseReadFile
+    | ListDirectoryRequested
+    | ReadFileRequested
 )
 
 
@@ -63,8 +80,25 @@ FileExplorerMsg = (
 
 def update(
     model: FileExplorerModel, msg: FileExplorerMsg
-) -> tuple[FileExplorerModel, str]:
+) -> tuple[FileExplorerModel, Cmd]:
     match msg:
+        case ListDirectoryRequested(path=path):
+
+            async def perform():
+                return _do_list_directory(path)
+
+            return model, effect(perform=perform, to_msg=lambda msg: msg)
+        case ReadFileRequested(path=path):
+            if path.endswith(".py"):
+                return model, tool_result(
+                    "Python files should be read with the Code Explorer's "
+                    "open_file tool, not read_file."
+                )
+
+            async def perform():
+                return _do_read_file(path)
+
+            return model, effect(perform=perform, to_msg=lambda msg: msg)
         case DirectoryListed(path=path, entries=entries, listing_text=text):
             return (
                 replace(
@@ -73,24 +107,24 @@ def update(
                     listing_entries=entries,
                     listing_text=text,
                 ),
-                text,
+                tool_result(text),
             )
         case DirectoryListError(error=error):
-            return model, error
+            return model, tool_result(error)
         case FileRead(path=path, content=content):
             return (
                 replace(model, open_file_path=path, open_file_content=content),
-                content,
+                tool_result(content),
             )
         case FileReadError(error=error):
-            return model, error
-        case CloseReadFile():
+            return model, tool_result(error)
+        case CloseReadFile(initiator=init):
             if model.open_file_path is None:
-                return model, "No file is open."
+                return model, for_initiator(init, "No file is open.")
             path = model.open_file_path
             return (
                 replace(model, open_file_path=None, open_file_content=None),
-                f"Closed: {path}",
+                for_initiator(init, f"Closed: {path}"),
             )
 
 
@@ -205,16 +239,14 @@ def view_html(model: FileExplorerModel) -> str:
 # --- Anticorruption layers ---
 
 
-async def from_llm(
-    model: FileExplorerModel, tool_name: str, args: dict
-) -> FileExplorerMsg:
+def from_llm(model: FileExplorerModel, tool_name: str, args: dict) -> FileExplorerMsg:
     match tool_name:
         case "list_directory":
-            return _do_list_directory(args.get("path", "."))
+            return ListDirectoryRequested(path=args.get("path", "."))
         case "read_file":
-            return _do_read_file(args["path"])
+            return ReadFileRequested(path=args["path"])
         case "close_read_file":
-            return CloseReadFile()
+            return CloseReadFile(initiator=Initiator.LLM)
     raise ValueError(f"FileExplorer: unknown tool '{tool_name}'")
 
 
@@ -223,7 +255,7 @@ def from_ui(
 ) -> FileExplorerMsg | None:
     match event_name:
         case "close_read_file":
-            return CloseReadFile()
+            return CloseReadFile(initiator=Initiator.UI)
     return None
 
 
@@ -247,13 +279,6 @@ def _do_list_directory(path: str) -> FileExplorerMsg:
 
 
 def _do_read_file(path: str) -> FileExplorerMsg:
-    if path.endswith(".py"):
-        return FileReadError(
-            error=(
-                "Python files should be read with the Code Explorer's "
-                "open_file tool, not read_file."
-            )
-        )
     p = Path(path)
     if not p.is_file():
         return FileReadError(error=f"File not found: {path}")

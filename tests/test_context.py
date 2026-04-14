@@ -224,11 +224,9 @@ class TestContextDispatch:
             )
         )
         # Now use frontend event to update it
-        result = ctx.handle_widget_event(
+        await ctx.handle_widget_event(
             "update_task_status", {"task_id": 1, "status": "done"}
         )
-        assert result is not None
-        assert "done" in result
         assert task_list.model.tasks[0].status.value == "done"
 
     async def test_widget_event_rejects_non_frontend_tool(self):
@@ -238,7 +236,9 @@ class TestContextDispatch:
             conversation_log=create_conversation_log(),
         )
         # action_log_start is NOT in frontend_tools
-        result = ctx.handle_widget_event("action_log_start", {"description": "Hacked"})
+        result = await ctx.handle_widget_event(
+            "action_log_start", {"description": "Hacked"}
+        )
         assert result is None
 
     async def test_widget_event_rejects_unknown_tool(self):
@@ -247,7 +247,7 @@ class TestContextDispatch:
             children=[],
             conversation_log=create_conversation_log(),
         )
-        result = ctx.handle_widget_event("nonexistent", {})
+        result = await ctx.handle_widget_event("nonexistent", {})
         assert result is None
 
     async def test_text_response_recorded_in_conversation(self):

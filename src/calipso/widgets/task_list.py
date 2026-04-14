@@ -8,6 +8,7 @@ from enum import StrEnum
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.tools import ToolDefinition
 
+from calipso.cmd import Cmd, Initiator, for_initiator, tool_result
 from calipso.widget import WidgetHandle, create_widget
 
 
@@ -52,11 +53,13 @@ class CreateTask:
 class UpdateTaskStatus:
     task_id: int
     status: TaskStatus
+    initiator: Initiator
 
 
 @dataclass(frozen=True)
 class RemoveTask:
     task_id: int
+    initiator: Initiator
 
 
 TaskListMsg = CreateTask | UpdateTaskStatus | RemoveTask
@@ -65,15 +68,15 @@ TaskListMsg = CreateTask | UpdateTaskStatus | RemoveTask
 # --- Update (pure) ---
 
 
-def update(model: TaskListModel, msg: TaskListMsg) -> tuple[TaskListModel, str]:
+def update(model: TaskListModel, msg: TaskListMsg) -> tuple[TaskListModel, Cmd]:
     match msg:
         case CreateTask(description=desc):
             task = Task(id=model.next_id, description=desc)
             return (
                 replace(model, tasks=(*model.tasks, task), next_id=model.next_id + 1),
-                f"Created task {task.id}: {task.description}",
+                tool_result(f"Created task {task.id}: {task.description}"),
             )
-        case UpdateTaskStatus(task_id=tid, status=new_status):
+        case UpdateTaskStatus(task_id=tid, status=new_status, initiator=init):
             new_tasks = []
             found = False
             for task in model.tasks:
@@ -83,16 +86,18 @@ def update(model: TaskListModel, msg: TaskListMsg) -> tuple[TaskListModel, str]:
                 else:
                     new_tasks.append(task)
             if not found:
-                return model, f"Task {tid} not found"
+                return model, for_initiator(init, f"Task {tid} not found")
             return (
                 replace(model, tasks=tuple(new_tasks)),
-                f"Task {tid} status updated to {new_status}",
+                for_initiator(init, f"Task {tid} status updated to {new_status}"),
             )
-        case RemoveTask(task_id=tid):
+        case RemoveTask(task_id=tid, initiator=init):
             new_tasks = tuple(t for t in model.tasks if t.id != tid)
             if len(new_tasks) == len(model.tasks):
-                return model, f"Task {tid} not found"
-            return replace(model, tasks=new_tasks), f"Removed task {tid}"
+                return model, for_initiator(init, f"Task {tid} not found")
+            return replace(model, tasks=new_tasks), for_initiator(
+                init, f"Removed task {tid}"
+            )
 
 
 # --- Views ---
@@ -198,7 +203,7 @@ def view_html(model: TaskListModel) -> str:
 # --- Anticorruption layers ---
 
 
-async def from_llm(model: TaskListModel, tool_name: str, args: dict) -> TaskListMsg:
+def from_llm(model: TaskListModel, tool_name: str, args: dict) -> TaskListMsg:
     match tool_name:
         case "create_task":
             return CreateTask(description=args["description"])
@@ -208,9 +213,11 @@ async def from_llm(model: TaskListModel, tool_name: str, args: dict) -> TaskList
             except ValueError:
                 valid = ", ".join(s.value for s in TaskStatus)
                 raise ValueError(f"Invalid status '{args['status']}'. Valid: {valid}")
-            return UpdateTaskStatus(task_id=args["task_id"], status=status)
+            return UpdateTaskStatus(
+                task_id=args["task_id"], status=status, initiator=Initiator.LLM
+            )
         case "remove_task":
-            return RemoveTask(task_id=args["task_id"])
+            return RemoveTask(task_id=args["task_id"], initiator=Initiator.LLM)
     raise ValueError(f"TaskList: unknown tool '{tool_name}'")
 
 
@@ -221,9 +228,11 @@ def from_ui(model: TaskListModel, event_name: str, args: dict) -> TaskListMsg | 
                 status = TaskStatus(args["status"])
             except ValueError:
                 return None
-            return UpdateTaskStatus(task_id=args["task_id"], status=status)
+            return UpdateTaskStatus(
+                task_id=args["task_id"], status=status, initiator=Initiator.UI
+            )
         case "remove_task":
-            return RemoveTask(task_id=args["task_id"])
+            return RemoveTask(task_id=args["task_id"], initiator=Initiator.UI)
     return None
 
 

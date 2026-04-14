@@ -481,10 +481,12 @@ class TestFileExplorer:
         assert "No file open" in msgs[0].parts[0].content
 
     def test_view_messages_with_file(self):
+        from calipso.cmd import CmdToolResult
         from calipso.widgets.file_explorer import FileExplorerModel, FileRead, update
 
         model = FileExplorerModel()
-        model, _ = update(model, FileRead(path="test.txt", content="content here"))
+        model, cmd = update(model, FileRead(path="test.txt", content="content here"))
+        assert isinstance(cmd, CmdToolResult)
         # Verify via view function directly
         from calipso.widgets.file_explorer import view_messages
 
@@ -508,7 +510,7 @@ class TestFileExplorer:
         )
 
         model = FileExplorerModel()
-        model, _ = update(model, FileRead(path="test.txt", content="hello"))
+        model, _cmd = update(model, FileRead(path="test.txt", content="hello"))
         html = view_html(model)
         assert "test.txt" in html
         assert "hello" in html

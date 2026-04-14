@@ -52,30 +52,48 @@ Everything in the agent's context is a widget — an Elm-inspired component foll
 
 - **Model** — a `@dataclass(frozen=True)` holding pure state
 - **Msg** — a union of `@dataclass(frozen=True)` variants declaring valid messages (e.g., `GoalMsg = SetGoal | ClearGoal`)
-- **update(model, msg) → (model, str)** — a pure function that pattern-matches on Msg, returns new model + tool result text
+- **update(model, msg) → (model, Cmd)** — a pure function that pattern-matches on Msg, returns new model + a Cmd describing what happens next
 - **View functions** — free functions `view_messages(model)`, `view_tools(model)`, `view_html(model)` that render the model into the LLM context and browser dashboard
-- **from_llm(model, tool_name, args) → Msg** — async anticorruption layer converting LLM tool calls to typed Msgs (may do I/O; `ValueError` is caught and returned as tool result)
-- **from_ui(model, event_name, args) → Msg | None** — sync anticorruption layer converting browser events to Msgs
+- **from_llm(model, tool_name, args) → Msg** — pure anticorruption layer converting LLM tool calls to typed Msgs (`ValueError` is caught and returned as tool result)
+- **from_ui(model, event_name, args) → Msg | None** — pure anticorruption layer converting browser events to Msgs
 - **create_xxx() → WidgetHandle** — factory function assembling all of the above
 
-Widgets are created via factory functions that return a `WidgetHandle` (`src/calipso/widget.py`) — the uniform interface holding a model reference + function table. The handle exposes: `view_messages()`, `view_tools()`, `view_html()`, `widget_id()`, `frontend_tools()`, `dispatch_llm()` (from_llm → update), `dispatch_ui()` (from_ui → update, sync), `send(msg)` (direct Msg dispatch bypassing anticorruption layers), and `.model` (read access to current state). Views compose via `yield from`. HTML is rendered via `render_md()` (markdown to safe HTML).
+### Cmd — describing side effects
 
-I/O resources (e.g., CodeExplorer's tree-sitter parser and summarizer agent) are captured in `from_llm` closures by the factory, not stored in the model. The ConversationLog is a regular `WidgetHandle` — Context interacts with it via `send()` for direct Msgs and pure query functions (`check_protocol()`, `current_segment()`) imported from the module.
+Following the Elm architecture, `update` never performs I/O. Instead it returns a `Cmd` (`src/calipso/cmd.py`) — a value describing what should happen next. The runtime (`WidgetHandle.dispatch_llm`) executes the Cmd loop:
+
+- **`CmdNone`** (`none` singleton) — no effect, no response. Used by internal messages (e.g., `UserMessageReceived`, `ToolTracked`).
+- **`CmdToolResult(text)`** — no effect; respond to the LLM tool call with text. Only meaningful when the initiator is the LLM.
+- **`CmdEffect(perform, to_msg)`** — an async thunk (`perform`) the runtime awaits, then converts the result into a Msg via `to_msg`, feeds it back into `update`, and recurses until a non-effect Cmd is reached.
+
+The Cmd loop runs in `dispatch_llm` and `dispatch_ui`: `from_llm/from_ui → Msg → update → Cmd → (execute effect → Msg → update → Cmd →)* → done`.
+
+### Initiator — LLM vs UI
+
+Messages that can originate from both the LLM and the browser carry an `initiator: Initiator` field — an enum with `LLM` and `UI` values. The `update` function uses the `for_initiator(initiator, text)` helper to return `CmdToolResult(text)` for LLM-initiated messages (so the tool gets a response) or `CmdNone` for UI-initiated messages (no tool call to respond to). Messages that can only come from the LLM (e.g., `CreateTask`, `OpenFileRequested`) use `tool_result()` directly.
+
+### WidgetHandle
+
+Widgets are created via factory functions that return a `WidgetHandle` (`src/calipso/widget.py`) — the uniform interface holding a model reference + function table. The handle exposes: `view_messages()`, `view_tools()`, `view_html()`, `widget_id()`, `frontend_tools()`, `dispatch_llm()` (from_llm → update → Cmd loop), `dispatch_ui()` (from_ui → update → Cmd loop), `send(msg)` (direct Msg dispatch bypassing anticorruption layers, must produce `CmdNone`), and `.model` (read access to current state). Views compose via `yield from`. HTML is rendered via `render_md()` (markdown to safe HTML).
+
+I/O resources (e.g., CodeExplorer's tree-sitter parser and summarizer agent) are captured in `update` closures by the factory, not stored in the model. These closures construct `CmdEffect` thunks that reference the resources but don't execute them — the runtime does. The ConversationLog is a regular `WidgetHandle` — Context interacts with it via `send()` for direct Msgs and pure query functions (`check_protocol()`, `current_segment()`) imported from the module.
 
 ### Implemented
 
 | Widget | Source | Model | Msg types | Tools | Renders |
 |---|---|---|---|---|---|
 | **SystemPrompt** | `system_prompt.py` | `SystemPromptModel(text)` | None (no update) | None | Identity and workspace framing text |
-| **AgentsMd** | `agents_md.py` | `AgentsMdModel(loaded_path, content, error)` | `AgentsReloaded` | `reload_agents_md`\* | Behavioral instructions from `AGENTS.md`/`CLAUDE.md` |
-| **Goal** | `goal.py` | `GoalModel(text)` | `SetGoal \| ClearGoal` | `set_goal`\*, `clear_goal`\* | Goal panel with inline edit input and clear button |
-| **TaskList** | `task_list.py` | `TaskListModel(tasks, next_id)` | `CreateTask \| UpdateTaskStatus \| RemoveTask` | `create_task`, `update_task_status`\*, `remove_task`\* | Checklist with interactive checkboxes and remove buttons |
+| **AgentsMd** | `agents_md.py` | `AgentsMdModel(loaded_path, content, error)` | `ReloadRequested† \| AgentsReloaded†` | `reload_agents_md`\* | Behavioral instructions from `AGENTS.md`/`CLAUDE.md` |
+| **Goal** | `goal.py` | `GoalModel(text)` | `SetGoal† \| ClearGoal†` | `set_goal`\*, `clear_goal`\* | Goal panel with inline edit input and clear button |
+| **TaskList** | `task_list.py` | `TaskListModel(tasks, next_id)` | `CreateTask \| UpdateTaskStatus† \| RemoveTask†` | `create_task`, `update_task_status`\*, `remove_task`\* | Checklist with interactive checkboxes and remove buttons |
 | **ConversationLog** | `conversation_log.py` | `ConversationLogModel(turns, active_action, ...)` | `UserMessageReceived \| ResponseReceived \| ToolResultsReceived \| ActionLogStart \| ActionLogEnd \| ToolTracked` | `action_log_start`, `action_log_end` | Action protocol rules + conversation history; summarized segments render summary + tool parts |
-| **CodeExplorer** | `code_explorer.py` | `CodeExplorerModel(open_files, query_results)` | `FileOpened \| FileOpenError \| FileClosed \| QueryCompleted \| QueryError` | `open_file`, `close_file`\*, `query`, `query_all` | Open files + tree-sitter query results (signatures + `[...REDACTED...]` body summaries) |
-| **FileExplorer** | `file_explorer.py` | `FileExplorerModel(listing_*, open_file_*)` | `DirectoryListed \| DirectoryListError \| FileRead \| FileReadError \| CloseReadFile` | `list_directory`, `read_file`, `close_read_file`\* | Directory listing + open file content; rejects `.py` files |
+| **CodeExplorer** | `code_explorer.py` | `CodeExplorerModel(open_files, query_results)` | `OpenFileRequested \| FileOpened \| FileOpenError \| FileClosed† \| QueryRequested \| QueryAllRequested \| QueryCompleted \| QueryError` | `open_file`, `close_file`\*, `query`, `query_all` | Open files + tree-sitter query results (signatures + `[...REDACTED...]` body summaries) |
+| **FileExplorer** | `file_explorer.py` | `FileExplorerModel(listing_*, open_file_*)` | `ListDirectoryRequested \| DirectoryListed \| DirectoryListError \| ReadFileRequested \| FileRead \| FileReadError \| CloseReadFile†` | `list_directory`, `read_file`, `close_read_file`\* | Directory listing + open file content; rejects `.py` files |
 | **Context** | `context.py` | N/A (compositor) | N/A | None | Composes: system prompt → conversation log → state panels (wrapped in `CURRENT STATE` markers), dispatches via `dispatch_llm()`/`dispatch_ui()`, detects changes via `changed_html()` |
 
 \* = frontend-callable (invocable from the browser without LLM involvement via `dispatch_ui()`)
+
+† = carries `initiator: Initiator` field (can originate from either LLM or UI)
 
 ### Planned
 

@@ -11,6 +11,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.tools import ToolDefinition
 
+from calipso.cmd import Cmd, Initiator, effect, for_initiator, tool_result
 from calipso.summarizer import create_summarizer_agent
 from calipso.widget import WidgetHandle, create_widget
 
@@ -60,6 +61,7 @@ class FileOpenError:
 @dataclass(frozen=True)
 class FileClosed:
     path: str
+    initiator: Initiator
 
 
 @dataclass(frozen=True)
@@ -72,40 +74,115 @@ class QueryError:
     error: str
 
 
-CodeExplorerMsg = FileOpened | FileOpenError | FileClosed | QueryCompleted | QueryError
+@dataclass(frozen=True)
+class OpenFileRequested:
+    path: str
 
 
-# --- Update (pure) ---
+@dataclass(frozen=True)
+class QueryRequested:
+    path: str
+    query: str
 
 
-def update(
-    model: CodeExplorerModel, msg: CodeExplorerMsg
-) -> tuple[CodeExplorerModel, str]:
-    match msg:
-        case FileOpened(path=path, open_file=of, query_result=qr):
-            new_files = {**model.open_files, path: of}
-            new_results = {**model.query_results, path: qr}
-            return (
-                replace(model, open_files=new_files, query_results=new_results),
-                f"{path}:\n{qr}",
-            )
-        case FileOpenError(path=path, error=error):
-            return model, error
-        case FileClosed(path=path):
-            if path not in model.open_files:
-                return model, f"File not open: {path}"
-            new_files = {k: v for k, v in model.open_files.items() if k != path}
-            new_results = {k: v for k, v in model.query_results.items() if k != path}
-            return (
-                replace(model, open_files=new_files, query_results=new_results),
-                f"Closed: {path}",
-            )
-        case QueryCompleted(results=results):
-            new_results = {**model.query_results, **results}
-            text = "\n\n".join(f"{p}:\n{r}" for p, r in results.items())
-            return replace(model, query_results=new_results), text
-        case QueryError(error=error):
-            return model, error
+@dataclass(frozen=True)
+class QueryAllRequested:
+    query: str
+
+
+CodeExplorerMsg = (
+    FileOpened
+    | FileOpenError
+    | FileClosed
+    | QueryCompleted
+    | QueryError
+    | OpenFileRequested
+    | QueryRequested
+    | QueryAllRequested
+)
+
+
+# --- Update ---
+
+
+def _create_update(parser: tree_sitter.Parser, summarizer: Agent):
+    """Create the update closure with access to I/O resources.
+
+    The update function itself remains pure — it constructs CmdEffect
+    descriptions but does not execute them. The parser and summarizer
+    are captured for use in effect thunks.
+    """
+
+    def update(
+        model: CodeExplorerModel, msg: CodeExplorerMsg
+    ) -> tuple[CodeExplorerModel, Cmd]:
+        match msg:
+            case OpenFileRequested(path=path):
+
+                async def perform_open():
+                    p = Path(path)
+                    if not p.is_file():
+                        return FileOpenError(path=path, error=f"File not found: {path}")
+                    source = p.read_bytes()
+                    tree = parser.parse(source)
+                    of = OpenFile(path=path, source=source, tree=tree)
+                    qr = await _run_query(of, _DEFAULT_QUERY, summarizer)
+                    return FileOpened(path=path, open_file=of, query_result=qr)
+
+                return model, effect(perform=perform_open, to_msg=lambda msg: msg)
+
+            case QueryRequested(path=path, query=query_str):
+                if path not in model.open_files:
+                    return model, tool_result(f"File not open: {path}")
+                of = model.open_files[path]
+
+                async def perform_query(of=of, query_str=query_str):
+                    result = await _run_query(of, query_str, summarizer)
+                    return QueryCompleted(results={of.path: result})
+
+                return model, effect(perform=perform_query, to_msg=lambda msg: msg)
+
+            case QueryAllRequested(query=query_str):
+                if not model.open_files:
+                    return model, tool_result("No files open.")
+                open_files = dict(model.open_files)
+
+                async def perform_query_all():
+                    results = {}
+                    for path, of in open_files.items():
+                        results[path] = await _run_query(of, query_str, summarizer)
+                    return QueryCompleted(results=results)
+
+                return model, effect(perform=perform_query_all, to_msg=lambda msg: msg)
+
+            case FileOpened(path=path, open_file=of, query_result=qr):
+                new_files = {**model.open_files, path: of}
+                new_results = {**model.query_results, path: qr}
+                return (
+                    replace(model, open_files=new_files, query_results=new_results),
+                    tool_result(f"{path}:\n{qr}"),
+                )
+            case FileOpenError(path=path, error=error):
+                return model, tool_result(error)
+            case FileClosed(path=path, initiator=init):
+                if path not in model.open_files:
+                    return model, for_initiator(init, f"File not open: {path}")
+                new_files = {k: v for k, v in model.open_files.items() if k != path}
+                new_results = {
+                    k: v for k, v in model.query_results.items() if k != path
+                }
+                return (
+                    replace(model, open_files=new_files, query_results=new_results),
+                    for_initiator(init, f"Closed: {path}"),
+                )
+            case QueryCompleted(results=results):
+                new_results = {**model.query_results, **results}
+                text = "\n\n".join(f"{p}:\n{r}" for p, r in results.items())
+                return replace(model, query_results=new_results), tool_result(text)
+            case QueryError(error=error):
+                return model, tool_result(error)
+
+    return update
 
 
 # --- Views ---
@@ -244,46 +321,17 @@ def view_html(model: CodeExplorerModel) -> str:
 # --- Anticorruption layers ---
 
 
-def _create_from_llm(parser: tree_sitter.Parser, summarizer: Agent):
-    """Create the from_llm closure with access to I/O resources."""
-
-    async def from_llm(
-        model: CodeExplorerModel, tool_name: str, args: dict
-    ) -> CodeExplorerMsg:
-        match tool_name:
-            case "open_file":
-                path = args["path"]
-                p = Path(path)
-                if not p.is_file():
-                    return FileOpenError(path=path, error=f"File not found: {path}")
-                source = p.read_bytes()
-                tree = parser.parse(source)
-                of = OpenFile(path=path, source=source, tree=tree)
-                qr = await _run_query(of, _DEFAULT_QUERY, summarizer)
-                return FileOpened(path=path, open_file=of, query_result=qr)
-
-            case "close_file":
-                return FileClosed(path=args["path"])
-
-            case "query":
-                path = args["path"]
-                if path not in model.open_files:
-                    return QueryError(error=f"File not open: {path}")
-                of = model.open_files[path]
-                result = await _run_query(of, args["query"], summarizer)
-                return QueryCompleted(results={path: result})
-
-            case "query_all":
-                if not model.open_files:
-                    return QueryError(error="No files open.")
-                results = {}
-                for path, of in model.open_files.items():
-                    results[path] = await _run_query(of, args["query"], summarizer)
-                return QueryCompleted(results=results)
-
-        raise ValueError(f"CodeExplorer: unknown tool '{tool_name}'")
-
-    return from_llm
+def from_llm(model: CodeExplorerModel, tool_name: str, args: dict) -> CodeExplorerMsg:
+    match tool_name:
+        case "open_file":
+            return OpenFileRequested(path=args["path"])
+        case "close_file":
+            return FileClosed(path=args["path"], initiator=Initiator.LLM)
+        case "query":
+            return QueryRequested(path=args["path"], query=args["query"])
+        case "query_all":
+            return QueryAllRequested(query=args["query"])
+    raise ValueError(f"CodeExplorer: unknown tool '{tool_name}'")
 
 
 def from_ui(
@@ -291,7 +339,7 @@ def from_ui(
 ) -> CodeExplorerMsg | None:
     match event_name:
         case "close_file":
-            return FileClosed(path=args["path"])
+            return FileClosed(path=args["path"], initiator=Initiator.UI)
     return None
 
 
@@ -356,11 +404,11 @@ def create_code_explorer() -> WidgetHandle:
     return create_widget(
         id="widget-code-explorer",
         model=CodeExplorerModel(),
-        update=update,
+        update=_create_update(parser, summarizer),
         view_messages=view_messages,
         view_tools=view_tools,
         view_html=view_html,
-        from_llm=_create_from_llm(parser, summarizer),
+        from_llm=from_llm,
         from_ui=from_ui,
         frontend_tools=frozenset({"close_file"}),
     )

@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.tools import ToolDefinition
 
+from calipso.cmd import Cmd, Initiator, for_initiator
 from calipso.widget import WidgetHandle, create_widget, render_md
 
 # --- Model ---
@@ -23,11 +24,12 @@ class GoalModel:
 @dataclass(frozen=True)
 class SetGoal:
     goal: str
+    initiator: Initiator
 
 
 @dataclass(frozen=True)
 class ClearGoal:
-    pass
+    initiator: Initiator
 
 
 GoalMsg = SetGoal | ClearGoal
@@ -36,12 +38,14 @@ GoalMsg = SetGoal | ClearGoal
 # --- Update (pure) ---
 
 
-def update(model: GoalModel, msg: GoalMsg) -> tuple[GoalModel, str]:
+def update(model: GoalModel, msg: GoalMsg) -> tuple[GoalModel, Cmd]:
     match msg:
-        case SetGoal(goal=goal):
-            return replace(model, text=goal), f"Goal set: {goal}"
-        case ClearGoal():
-            return replace(model, text=None), "Goal cleared"
+        case SetGoal(goal=goal, initiator=initiator):
+            return replace(model, text=goal), for_initiator(
+                initiator, f"Goal set: {goal}"
+            )
+        case ClearGoal(initiator=initiator):
+            return replace(model, text=None), for_initiator(initiator, "Goal cleared")
 
 
 # --- Views ---
@@ -111,21 +115,21 @@ def view_html(model: GoalModel) -> str:
 # --- Anticorruption layers ---
 
 
-async def from_llm(model: GoalModel, tool_name: str, args: dict) -> GoalMsg:
+def from_llm(model: GoalModel, tool_name: str, args: dict) -> GoalMsg:
     match tool_name:
         case "set_goal":
-            return SetGoal(goal=args["goal"])
+            return SetGoal(goal=args["goal"], initiator=Initiator.LLM)
         case "clear_goal":
-            return ClearGoal()
+            return ClearGoal(initiator=Initiator.LLM)
     raise ValueError(f"Goal: unknown tool '{tool_name}'")
 
 
 def from_ui(model: GoalModel, event_name: str, args: dict) -> GoalMsg | None:
     match event_name:
         case "set_goal":
-            return SetGoal(goal=args["goal"])
+            return SetGoal(goal=args["goal"], initiator=Initiator.UI)
         case "clear_goal":
-            return ClearGoal()
+            return ClearGoal(initiator=Initiator.UI)
     return None
 
 

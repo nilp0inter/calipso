@@ -32,9 +32,9 @@ flowchart TB
 
 Each widget:
 
-- **Holds state** as dataclass fields
+- **Holds state** as frozen dataclass fields
 - **Renders via view functions** — generators yielding messages (`view_messages()`), tool definitions (`view_tools()`), or HTML (`view_html()`)
-- **Handles updates** — tool calls dispatched by the Context mutate widget state
+- **Handles updates via pure functions** — `update(model, msg) → (model, Cmd)` returns the new state plus a `Cmd` describing any side effect. The runtime executes the Cmd loop (effect → Msg → update → …) until no more effects remain
 
 Tools are not a separate concept — they are just another view (`view_tools() -> Iterator[ToolDefinition]`), composed the same way as messages. HTML is a third view: `view_html()` renders the widget as a browser panel, pushed to connected clients via WebSocket after every state mutation. Compaction is a view decision: the widget always has full state, but each view decides what to show.
 
@@ -52,7 +52,7 @@ The runner is a thin agentic loop that only talks to the Context:
 
 The agent runs a live browser dashboard alongside the agentic loop. A `DashboardServer` (aiohttp) serves an htmx SPA and maintains WebSocket connections. After every widget state change, the Context computes which widgets' `view_html()` output changed (via string comparison against a cache) and the server pushes only the changed HTML fragments using htmx's out-of-band swap mechanism (`hx-swap-oob`). Each widget has a stable HTML element ID derived from its class name.
 
-The browser is both an input and interaction channel. User messages are sent via WebSocket as `{"user_input": "..."}` and enqueued for the runner. Widgets can also declare **frontend tools** — a subset of their tools callable directly from the browser via `{"widget_event": {"tool_name": "...", "args": {...}}}` messages. Frontend events bypass the LLM and action log protocol, calling the widget's `update()` method directly and pushing the resulting HTML changes back. This allows widgets to render interactive HTML (buttons, checkboxes, forms) that mutate their own state without an LLM round-trip. During a turn, the dashboard shows a thinking indicator and disables the input.
+The browser is both an input and interaction channel. User messages are sent via WebSocket as `{"user_input": "..."}` and enqueued for the runner. Widgets can also declare **frontend tools** — a subset of their tools callable directly from the browser via `{"widget_event": {"tool_name": "...", "args": {...}}}` messages. Frontend events bypass the LLM and action log protocol, running through the same `from_ui → update → Cmd loop` path and pushing the resulting HTML changes back. Messages that can originate from both the LLM and the browser carry an `initiator: Initiator` field so `update` knows whether to produce a tool response (`CmdToolResult`) or not (`CmdNone`). This allows widgets to render interactive HTML (buttons, checkboxes, forms) that mutate their own state without an LLM round-trip. During a turn, the dashboard shows a thinking indicator and disables the input.
 
 All widget HTML output is rendered through a shared `render_md()` function that converts markdown to safe HTML (raw HTML in input is escaped before markdown processing).
 

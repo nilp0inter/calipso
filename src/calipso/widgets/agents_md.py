@@ -8,6 +8,7 @@ from pathlib import Path
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 from pydantic_ai.tools import ToolDefinition
 
+from calipso.cmd import Cmd, Initiator, effect, for_initiator
 from calipso.widget import WidgetHandle, create_widget, render_md
 
 _CANDIDATES = ("AGENTS.md", "CLAUDE.md")
@@ -31,21 +32,36 @@ class AgentsReloaded:
     loaded_path: str | None
     content: str | None
     error: str | None
+    initiator: Initiator
 
 
-AgentsMdMsg = AgentsReloaded
+@dataclass(frozen=True)
+class ReloadRequested:
+    initiator: Initiator
+
+
+AgentsMdMsg = AgentsReloaded | ReloadRequested
 
 
 # --- Update (pure) ---
 
 
-def update(model: AgentsMdModel, msg: AgentsMdMsg) -> tuple[AgentsMdModel, str]:
-    match msg:
-        case AgentsReloaded(loaded_path=lp, content=c, error=e):
-            new_model = replace(model, loaded_path=lp, content=c, error=e)
-            if e:
-                return new_model, e
-            return new_model, f"Loaded: {lp}"
+def _create_update(directory: Path):
+    def update(model: AgentsMdModel, msg: AgentsMdMsg) -> tuple[AgentsMdModel, Cmd]:
+        match msg:
+            case ReloadRequested(initiator=init):
+
+                async def perform():
+                    return _load_from_disk(directory, init)
+
+                return model, effect(perform=perform, to_msg=lambda msg: msg)
+            case AgentsReloaded(loaded_path=lp, content=c, error=e, initiator=init):
+                new_model = replace(model, loaded_path=lp, content=c, error=e)
+                if e:
+                    return new_model, for_initiator(init, e)
+                return new_model, for_initiator(init, f"Loaded: {lp}")
+
+    return update
 
 
 # --- Views ---
@@ -94,7 +110,7 @@ def view_html(model: AgentsMdModel) -> str:
 # --- I/O helper ---
 
 
-def _load_from_disk(directory: Path) -> AgentsReloaded:
+def _load_from_disk(directory: Path, initiator: Initiator) -> AgentsReloaded:
     """Read AGENTS.md or CLAUDE.md from disk and return a Msg."""
     for name in _CANDIDATES:
         p = directory / name
@@ -103,37 +119,32 @@ def _load_from_disk(directory: Path) -> AgentsReloaded:
         except (FileNotFoundError, OSError):
             continue
         if text.strip():
-            return AgentsReloaded(loaded_path=str(p), content=text, error=None)
+            return AgentsReloaded(
+                loaded_path=str(p), content=text, error=None, initiator=initiator
+            )
     return AgentsReloaded(
         loaded_path=None,
         content=None,
         error=f"Neither AGENTS.md nor CLAUDE.md found in {directory}",
+        initiator=initiator,
     )
 
 
 # --- Anticorruption layers ---
 
 
-def _create_from_llm(directory: Path):
-    async def from_llm(model: AgentsMdModel, tool_name: str, args: dict) -> AgentsMdMsg:
-        match tool_name:
-            case "reload_agents_md":
-                return _load_from_disk(directory)
-        raise ValueError(f"AgentsMd: unknown tool '{tool_name}'")
-
-    return from_llm
+def from_llm(model: AgentsMdModel, tool_name: str, args: dict) -> AgentsMdMsg:
+    match tool_name:
+        case "reload_agents_md":
+            return ReloadRequested(initiator=Initiator.LLM)
+    raise ValueError(f"AgentsMd: unknown tool '{tool_name}'")
 
 
-def _create_from_ui(directory: Path):
-    def from_ui(
-        model: AgentsMdModel, event_name: str, args: dict
-    ) -> AgentsMdMsg | None:
-        match event_name:
-            case "reload_agents_md":
-                return _load_from_disk(directory)
-        return None
-
-    return from_ui
+def from_ui(model: AgentsMdModel, event_name: str, args: dict) -> AgentsMdMsg | None:
+    match event_name:
+        case "reload_agents_md":
+            return ReloadRequested(initiator=Initiator.UI)
+    return None
 
 
 # --- Factory ---
@@ -143,7 +154,7 @@ def create_agents_md(directory: Path | None = None) -> WidgetHandle:
     if directory is None:
         directory = Path.cwd()
 
-    initial_msg = _load_from_disk(directory)
+    initial_msg = _load_from_disk(directory, Initiator.LLM)
     initial_model = AgentsMdModel(
         loaded_path=initial_msg.loaded_path,
         content=initial_msg.content,
@@ -153,11 +164,11 @@ def create_agents_md(directory: Path | None = None) -> WidgetHandle:
     return create_widget(
         id="widget-agents-md",
         model=initial_model,
-        update=update,
+        update=_create_update(directory),
         view_messages=view_messages,
         view_tools=view_tools,
         view_html=view_html,
-        from_llm=_create_from_llm(directory),
-        from_ui=_create_from_ui(directory),
+        from_llm=from_llm,
+        from_ui=from_ui,
         frontend_tools=frozenset({"reload_agents_md"}),
     )

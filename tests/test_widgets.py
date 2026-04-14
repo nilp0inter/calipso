@@ -57,30 +57,56 @@ class TestSystemPrompt:
 
 
 class TestAgentsMd:
-    def test_loads_file(self, tmp_path: Path):
-        md = tmp_path / "AGENTS.md"
-        md.write_text("Be concise.")
-        w = AgentsMd(path=md)
+    def test_loads_agents_md(self, tmp_path: Path):
+        (tmp_path / "AGENTS.md").write_text("Be concise.")
+        w = AgentsMd(directory=tmp_path)
         msgs = list(w.view_messages())
         assert len(msgs) == 1
         assert isinstance(msgs[0], ModelRequest)
         assert msgs[0].parts[0].content == "Be concise."
 
-    def test_missing_file_yields_nothing(self, tmp_path: Path):
-        w = AgentsMd(path=tmp_path / "nonexistent.md")
+    def test_falls_back_to_claude_md(self, tmp_path: Path):
+        (tmp_path / "CLAUDE.md").write_text("Be helpful.")
+        w = AgentsMd(directory=tmp_path)
+        msgs = list(w.view_messages())
+        assert len(msgs) == 1
+        assert msgs[0].parts[0].content == "Be helpful."
+
+    def test_agents_md_takes_priority(self, tmp_path: Path):
+        (tmp_path / "AGENTS.md").write_text("From AGENTS")
+        (tmp_path / "CLAUDE.md").write_text("From CLAUDE")
+        w = AgentsMd(directory=tmp_path)
+        assert w.content == "From AGENTS"
+
+    def test_missing_files_yields_nothing(self, tmp_path: Path):
+        w = AgentsMd(directory=tmp_path)
         msgs = list(w.view_messages())
         assert msgs == []
+        assert w.error is not None
 
     def test_empty_file_yields_nothing(self, tmp_path: Path):
-        md = tmp_path / "AGENTS.md"
-        md.write_text("   \n  ")
-        w = AgentsMd(path=md)
+        (tmp_path / "AGENTS.md").write_text("   \n  ")
+        w = AgentsMd(directory=tmp_path)
         msgs = list(w.view_messages())
         assert msgs == []
 
-    def test_view_tools_is_empty(self, tmp_path: Path):
-        w = AgentsMd(path=tmp_path / "AGENTS.md")
-        assert list(w.view_tools()) == []
+    def test_view_tools_has_reload(self, tmp_path: Path):
+        w = AgentsMd(directory=tmp_path)
+        names = {t.name for t in w.view_tools()}
+        assert names == {"reload_agents_md"}
+
+    async def test_reload(self, tmp_path: Path):
+        w = AgentsMd(directory=tmp_path)
+        assert w.error is not None
+        (tmp_path / "AGENTS.md").write_text("New content")
+        result = await w.update("reload_agents_md", {})
+        assert "Loaded" in result
+        assert w.content == "New content"
+        assert w.error is None
+
+    def test_frontend_tools(self, tmp_path: Path):
+        w = AgentsMd(directory=tmp_path)
+        assert w.frontend_tools() == {"reload_agents_md"}
 
 
 # --- Goal ---

@@ -122,17 +122,19 @@ class TestConversationLogHtml:
 
 
 class TestAgentsMdHtml:
-    def test_missing_file(self, tmp_path):
-        w = AgentsMd(path=tmp_path / "missing.md")
+    def test_missing_file_shows_warning_and_reload(self, tmp_path):
+        w = AgentsMd(directory=tmp_path)
         html = w.view_html()
-        assert "Not found" in html
+        assert "Neither" in html
+        assert "reload_agents_md" in html
 
-    def test_with_content(self, tmp_path):
-        f = tmp_path / "AGENTS.md"
-        f.write_text("Be careful.")
-        w = AgentsMd(path=f)
+    def test_with_content_shows_reload(self, tmp_path):
+        (tmp_path / "AGENTS.md").write_text("Be careful.")
+        w = AgentsMd(directory=tmp_path)
         html = w.view_html()
         assert "Be careful." in html
+        assert "reload_agents_md" in html
+        assert "AGENTS.md" in html
 
 
 # --- Context change detection ---

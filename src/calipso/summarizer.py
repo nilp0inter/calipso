@@ -117,7 +117,7 @@ def create_summarizer_agent() -> Agent:
         api_key=os.environ.get("OPENROUTER_API_KEY"),
     )
     model = OpenAIChatModel(
-        "liquid/lfm-2.5-1.2b-thinking:free",
+        "google/gemini-3.1-flash-lite-preview",
         provider=provider,
     )
     return Agent(

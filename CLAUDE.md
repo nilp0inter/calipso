@@ -29,7 +29,7 @@ uv run pytest tests/test_widgets.py::TestConversationLog
 ## Architecture
 
 - **Model setup** (`src/calipso/model.py`): configures the Pydantic AI `Model` instance (OpenRouter provider). No `Agent` — we call `Model.request()` directly.
-- **Summarizer** (`src/calipso/summarizer.py`): Pydantic AI `Agent` using a cheap model (`liquid/lfm-2.5-1.2b-thinking:free`) that takes comment-stripped code and returns signatures with `[...REDACTED...]` body descriptions. Used by the CodeExplorer widget.
+- **Summarizer** (`src/calipso/summarizer.py`): Pydantic AI `Agent` using a cheap model (`google/gemini-3.1-flash-lite-preview`) that takes comment-stripped code and returns signatures with `[...REDACTED...]` body descriptions. Used by the CodeExplorer widget.
 - **Runner** (`src/calipso/runner.py`): thin agentic loop. Materializes context views, calls `Model.request()`, dispatches tool calls. Accepts an `on_update` callback for pushing live updates.
 - **Dashboard server** (`src/calipso/server.py`): aiohttp HTTP + WebSocket server. Serves the htmx SPA at `/`, pushes per-widget HTML diffs via `hx-swap-oob` over WebSocket, receives user input and frontend widget events.
 - **SPA** (`src/calipso/static/index.html`): htmx single-page app with WebSocket extension. Three-column grid: sidebar for state widgets, code panel (FileExplorer + CodeExplorer), main area for conversation with input bar. No build step. Exposes `sendWidgetEvent()` for browser-initiated widget updates.

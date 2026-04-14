@@ -10,7 +10,7 @@ Configures the Pydantic AI `Model` instance for provider-agnostic LLM communicat
 
 **Source:** `src/calipso/summarizer.py`
 
-A Pydantic AI agent that takes Python code (with comments already stripped) and produces a summary preserving signatures verbatim while replacing code bodies with `[...REDACTED...]` followed by a description. Uses a cheap, fast model (`liquid/lfm-2.5-1.2b-thinking:free` via OpenRouter) to keep costs low. Called by the `CodeExplorer` widget after every tree-sitter query.
+A Pydantic AI agent that takes Python code (with comments already stripped) and produces a summary preserving signatures verbatim while replacing code bodies with `[...REDACTED...]` followed by a description. Uses a cheap, fast model (`google/gemini-3.1-flash-lite-preview` via OpenRouter) to keep costs low. Called by the `CodeExplorer` widget after every tree-sitter query.
 
 ## Runner
 

@@ -17,7 +17,18 @@ class SystemPrompt(Widget):
         " a CURRENT STATE section with panels showing live state. Each panel"
         " has tools that modify it — when you call a tool, its panel updates"
         " immediately on the next turn. Read the panels to understand current"
-        " state, then respond or use tools to make progress."
+        " state, then respond or use tools to make progress.\n"
+        "\n"
+        "## Workflow\n"
+        "\n"
+        "When the user gives you a task, follow this workflow:\n"
+        "\n"
+        "1. **Set the goal** — use `set_goal` to record the objective.\n"
+        "2. **Plan tasks** — break the work into concrete steps and create"
+        " each one with `create_task`.\n"
+        "3. **Execute** — work through tasks one at a time. Update each"
+        " task to `in_progress` when you start it and `done` when you"
+        " finish. Continue until all tasks are complete."
     )
 
     def view_messages(self) -> Iterator[ModelMessage]:

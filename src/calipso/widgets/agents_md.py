@@ -2,92 +2,162 @@
 
 import html as html_mod
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 from pydantic_ai.tools import ToolDefinition
 
-from calipso.widget import Widget, render_md
+from calipso.widget import WidgetHandle, create_widget, render_md
 
 _CANDIDATES = ("AGENTS.md", "CLAUDE.md")
 
 
-@dataclass
-class AgentsMd(Widget):
-    """Loads behavioral instructions from AGENTS.md or CLAUDE.md (first found)."""
+# --- Model ---
 
-    directory: Path = field(default_factory=lambda: Path.cwd())
-    loaded_path: str | None = field(init=False, repr=False, default=None)
-    content: str | None = field(init=False, repr=False, default=None)
-    error: str | None = field(init=False, repr=False, default=None)
-    _tool_defs: list[ToolDefinition] = field(init=False, repr=False)
 
-    def __post_init__(self) -> None:
-        self._tool_defs = [
-            ToolDefinition(
-                name="reload_agents_md",
-                description=(
-                    "Reload behavioral instructions from AGENTS.md or CLAUDE.md."
-                ),
-                parameters_json_schema={"type": "object", "properties": {}},
-            ),
-        ]
-        self._load()
+@dataclass(frozen=True)
+class AgentsMdModel:
+    loaded_path: str | None = None
+    content: str | None = None
+    error: str | None = None
 
-    def _load(self) -> None:
-        for name in _CANDIDATES:
-            p = self.directory / name
-            try:
-                text = p.read_text()
-            except (FileNotFoundError, OSError):
-                continue
-            if text.strip():
-                self.loaded_path = str(p)
-                self.content = text
-                self.error = None
-                return
-        self.loaded_path = None
-        self.content = None
-        self.error = f"Neither AGENTS.md nor CLAUDE.md found in {self.directory}"
 
-    def view_messages(self) -> Iterator[ModelMessage]:
-        if self.content:
-            yield ModelRequest(parts=[SystemPromptPart(content=self.content)])
+# --- Messages ---
 
-    def view_tools(self) -> Iterator[ToolDefinition]:
-        yield from self._tool_defs
 
-    def view_html(self) -> str:
-        if self.error:
-            warning = (
-                '<p class="agents-md-warning">'
-                f"<em>{html_mod.escape(self.error)}</em></p>"
-            )
-            body = warning
-        else:
-            filename = Path(self.loaded_path).name if self.loaded_path else ""
-            body = f"<p><strong>{html_mod.escape(filename)}</strong></p>" + render_md(
-                self.content or ""
-            )
+@dataclass(frozen=True)
+class AgentsReloaded:
+    loaded_path: str | None
+    content: str | None
+    error: str | None
 
-        reload_btn = (
-            "<button onclick=\"sendWidgetEvent('reload_agents_md', {})\""
-            ' class="btn-remove" title="Reload">'
-            "Reload</button>"
+
+AgentsMdMsg = AgentsReloaded
+
+
+# --- Update (pure) ---
+
+
+def update(model: AgentsMdModel, msg: AgentsMdMsg) -> tuple[AgentsMdModel, str]:
+    match msg:
+        case AgentsReloaded(loaded_path=lp, content=c, error=e):
+            new_model = replace(model, loaded_path=lp, content=c, error=e)
+            if e:
+                return new_model, e
+            return new_model, f"Loaded: {lp}"
+
+
+# --- Views ---
+
+_TOOL_DEFS = [
+    ToolDefinition(
+        name="reload_agents_md",
+        description="Reload behavioral instructions from AGENTS.md or CLAUDE.md.",
+        parameters_json_schema={"type": "object", "properties": {}},
+    ),
+]
+
+
+def view_messages(model: AgentsMdModel) -> Iterator[ModelMessage]:
+    if model.content:
+        yield ModelRequest(parts=[SystemPromptPart(content=model.content)])
+
+
+def view_tools(model: AgentsMdModel) -> Iterator[ToolDefinition]:
+    yield from _TOOL_DEFS
+
+
+def view_html(model: AgentsMdModel) -> str:
+    if model.error:
+        warning = (
+            f'<p class="agents-md-warning"><em>{html_mod.escape(model.error)}</em></p>'
         )
-        return (
-            f'<div id="{self.widget_id()}" class="widget">'
-            f"<h3>AGENTS.md {reload_btn}</h3>{body}</div>"
+        body = warning
+    else:
+        filename = Path(model.loaded_path).name if model.loaded_path else ""
+        body = f"<p><strong>{html_mod.escape(filename)}</strong></p>" + render_md(
+            model.content or ""
         )
 
-    async def update(self, tool_name: str, args: dict) -> str:
-        if tool_name == "reload_agents_md":
-            self._load()
-            if self.error:
-                return self.error
-            return f"Loaded: {self.loaded_path}"
-        raise NotImplementedError(f"AgentsMd does not handle tool '{tool_name}'")
+    reload_btn = (
+        "<button onclick=\"sendWidgetEvent('reload_agents_md', {})\""
+        ' class="btn-remove" title="Reload">'
+        "Reload</button>"
+    )
+    return (
+        '<div id="widget-agents-md" class="widget">'
+        f"<h3>AGENTS.md {reload_btn}</h3>{body}</div>"
+    )
 
-    def frontend_tools(self) -> set[str]:
-        return {"reload_agents_md"}
+
+# --- I/O helper ---
+
+
+def _load_from_disk(directory: Path) -> AgentsReloaded:
+    """Read AGENTS.md or CLAUDE.md from disk and return a Msg."""
+    for name in _CANDIDATES:
+        p = directory / name
+        try:
+            text = p.read_text()
+        except (FileNotFoundError, OSError):
+            continue
+        if text.strip():
+            return AgentsReloaded(loaded_path=str(p), content=text, error=None)
+    return AgentsReloaded(
+        loaded_path=None,
+        content=None,
+        error=f"Neither AGENTS.md nor CLAUDE.md found in {directory}",
+    )
+
+
+# --- Anticorruption layers ---
+
+
+def _create_from_llm(directory: Path):
+    async def from_llm(model: AgentsMdModel, tool_name: str, args: dict) -> AgentsMdMsg:
+        match tool_name:
+            case "reload_agents_md":
+                return _load_from_disk(directory)
+        raise ValueError(f"AgentsMd: unknown tool '{tool_name}'")
+
+    return from_llm
+
+
+def _create_from_ui(directory: Path):
+    def from_ui(
+        model: AgentsMdModel, event_name: str, args: dict
+    ) -> AgentsMdMsg | None:
+        match event_name:
+            case "reload_agents_md":
+                return _load_from_disk(directory)
+        return None
+
+    return from_ui
+
+
+# --- Factory ---
+
+
+def create_agents_md(directory: Path | None = None) -> WidgetHandle:
+    if directory is None:
+        directory = Path.cwd()
+
+    initial_msg = _load_from_disk(directory)
+    initial_model = AgentsMdModel(
+        loaded_path=initial_msg.loaded_path,
+        content=initial_msg.content,
+        error=initial_msg.error,
+    )
+
+    return create_widget(
+        id="widget-agents-md",
+        model=initial_model,
+        update=update,
+        view_messages=view_messages,
+        view_tools=view_tools,
+        view_html=view_html,
+        from_llm=_create_from_llm(directory),
+        from_ui=_create_from_ui(directory),
+        frontend_tools=frozenset({"reload_agents_md"}),
+    )

@@ -5,7 +5,13 @@ from aiohttp.test_utils import TestClient, TestServer
 from pydantic_ai import models
 
 from calipso.server import DashboardServer, _add_oob
-from calipso.widgets import Context, ConversationLog, Goal, SystemPrompt, TaskList
+from calipso.widgets import (
+    Context,
+    create_conversation_log,
+    create_goal,
+    create_system_prompt,
+    create_task_list,
+)
 
 models.ALLOW_MODEL_REQUESTS = False
 
@@ -14,9 +20,9 @@ pytestmark = pytest.mark.anyio
 
 def _make_context():
     return Context(
-        system_prompt=SystemPrompt(),
-        children=[Goal(), TaskList()],
-        conversation_log=ConversationLog(),
+        system_prompt=create_system_prompt(),
+        children=[create_goal(), create_task_list()],
+        conversation_log=create_conversation_log(),
     )
 
 
@@ -60,7 +66,7 @@ async def test_push_updates_sends_changed():
             _ = await ws.receive_str()  # consume initial state
 
             # Mutate a widget and push
-            await ctx.children[0].update("set_goal", {"goal": "Test goal"})
+            await ctx.children[0].dispatch_llm("set_goal", {"goal": "Test goal"})
             await server.push_updates()
 
             msg = await ws.receive_str()

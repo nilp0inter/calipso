@@ -10,14 +10,14 @@ from calipso.model import create_http_client, create_model
 from calipso.runner import run_turn
 from calipso.server import DashboardServer
 from calipso.widgets import (
-    AgentsMd,
-    CodeExplorer,
     Context,
-    ConversationLog,
-    FileExplorer,
-    Goal,
-    SystemPrompt,
-    TaskList,
+    create_agents_md,
+    create_code_explorer,
+    create_conversation_log,
+    create_file_explorer,
+    create_goal,
+    create_system_prompt,
+    create_task_list,
 )
 
 PROMPT_DIR = Path("prompts")
@@ -77,15 +77,15 @@ async def async_main():
     model = create_model(http_client=http_client)
 
     context = Context(
-        system_prompt=SystemPrompt(),
+        system_prompt=create_system_prompt(),
         children=[
-            AgentsMd(),
-            Goal(),
-            TaskList(),
-            CodeExplorer(),
-            FileExplorer(),
+            create_agents_md(),
+            create_goal(),
+            create_task_list(),
+            create_code_explorer(),
+            create_file_explorer(),
         ],
-        conversation_log=ConversationLog(),
+        conversation_log=create_conversation_log(),
     )
 
     server = DashboardServer(context)

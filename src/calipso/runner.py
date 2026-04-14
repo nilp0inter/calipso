@@ -6,6 +6,7 @@ from pydantic_ai.messages import ModelRequest, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import Model, ModelRequestParameters
 
 from calipso.widgets.context import Context
+from calipso.widgets.conversation_log import ToolResultsReceived
 
 
 async def run_turn(
@@ -53,7 +54,9 @@ async def run_turn(
             for call_id, result in tool_results
         ]
         tool_request = ModelRequest(parts=tool_return_parts)
-        context.conversation_log.add_tool_results(tool_request, segment)
+        context.conversation_log.send(
+            ToolResultsReceived(request=tool_request, segment=segment)
+        )
 
 
 def _find_tool_name(response, call_id: str) -> str:

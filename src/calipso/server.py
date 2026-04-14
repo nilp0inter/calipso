@@ -50,7 +50,7 @@ class DashboardServer:
                     data = json.loads(msg.data)
                     if "widget_event" in data:
                         event = data["widget_event"]
-                        await self.context.handle_widget_event(
+                        self.context.handle_widget_event(
                             event["tool_name"],
                             event.get("args", {}),
                         )

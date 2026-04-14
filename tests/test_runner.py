@@ -11,7 +11,12 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from calipso.runner import run_turn
-from calipso.widgets import Context, ConversationLog, Goal, SystemPrompt
+from calipso.widgets import (
+    Context,
+    create_conversation_log,
+    create_goal,
+    create_system_prompt,
+)
 
 models.ALLOW_MODEL_REQUESTS = False
 pytestmark = pytest.mark.anyio
@@ -24,11 +29,14 @@ async def test_simple_text_response():
         return ModelResponse(parts=[TextPart(content="Hello from Calipso!")])
 
     model = FunctionModel(respond)
-    ctx = Context(system_prompt=SystemPrompt(), conversation_log=ConversationLog())
+    ctx = Context(
+        system_prompt=create_system_prompt(),
+        conversation_log=create_conversation_log(),
+    )
 
     result = await run_turn(model, ctx, "Hi")
     assert result == "Hello from Calipso!"
-    assert len(ctx.conversation_log.turns) == 1
+    assert len(ctx.conversation_log.model.turns) == 1
 
 
 async def test_tool_call_then_text():
@@ -61,12 +69,16 @@ async def test_tool_call_then_text():
         return ModelResponse(parts=[TextPart(content="Goal has been set!")])
 
     model = FunctionModel(respond)
-    goal = Goal()
-    ctx = Context(children=[goal], conversation_log=ConversationLog())
+    goal = create_goal()
+    ctx = Context(
+        system_prompt=create_system_prompt(),
+        children=[goal],
+        conversation_log=create_conversation_log(),
+    )
 
     result = await run_turn(model, ctx, "Set a goal")
     assert result == "Goal has been set!"
-    assert goal.text == "Test goal"
+    assert goal.model.text == "Test goal"
 
 
 async def test_multiple_tool_calls_in_sequence():
@@ -119,10 +131,14 @@ async def test_multiple_tool_calls_in_sequence():
         return ModelResponse(parts=[TextPart(content="Done!")])
 
     model = FunctionModel(respond)
-    goal = Goal()
-    ctx = Context(children=[goal], conversation_log=ConversationLog())
+    goal = create_goal()
+    ctx = Context(
+        system_prompt=create_system_prompt(),
+        children=[goal],
+        conversation_log=create_conversation_log(),
+    )
 
     result = await run_turn(model, ctx, "Do two things")
     assert result == "Done!"
-    assert goal.text == "Step 2"
+    assert goal.model.text == "Step 2"
     assert call_count == 3

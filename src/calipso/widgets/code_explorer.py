@@ -2,7 +2,7 @@
 
 import html as html_mod
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import tree_sitter
@@ -12,7 +12,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.tools import ToolDefinition
 
 from calipso.summarizer import create_summarizer_agent
-from calipso.widget import Widget
+from calipso.widget import WidgetHandle, create_widget
 
 PY_LANGUAGE = tree_sitter.Language(tspython.language())
 
@@ -23,7 +23,10 @@ _COMMENT_QUERY = tree_sitter.Query(
 )
 
 
-@dataclass
+# --- Model ---
+
+
+@dataclass(frozen=True)
 class OpenFile:
     """A file opened in the explorer with its cached parse tree."""
 
@@ -32,299 +35,292 @@ class OpenFile:
     tree: tree_sitter.Tree
 
 
-@dataclass
-class CodeExplorer(Widget):
-    """Widget for reading code via tree-sitter queries with LLM summarization."""
-
+@dataclass(frozen=True)
+class CodeExplorerModel:
     open_files: dict[str, OpenFile] = field(default_factory=dict)
     query_results: dict[str, str] = field(default_factory=dict)
-    _parser: tree_sitter.Parser = field(init=False, repr=False)
-    _summarizer: Agent = field(init=False, repr=False)
-    _tool_defs: list[ToolDefinition] = field(init=False, repr=False)
 
-    def __post_init__(self) -> None:
-        self._parser = tree_sitter.Parser(PY_LANGUAGE)
-        self._summarizer = create_summarizer_agent()
-        self._tool_defs = [
-            ToolDefinition(
-                name="open_file",
-                description=(
-                    "Open a Python file for exploration. "
-                    "Parses the file and shows top-level structure "
-                    "(function/class signatures with body summaries)."
-                ),
-                parameters_json_schema={
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "Path to the Python file.",
-                        },
-                    },
-                    "required": ["path"],
+
+# --- Messages ---
+
+
+@dataclass(frozen=True)
+class FileOpened:
+    path: str
+    open_file: OpenFile
+    query_result: str
+
+
+@dataclass(frozen=True)
+class FileOpenError:
+    path: str
+    error: str
+
+
+@dataclass(frozen=True)
+class FileClosed:
+    path: str
+
+
+@dataclass(frozen=True)
+class QueryCompleted:
+    results: dict[str, str]
+
+
+@dataclass(frozen=True)
+class QueryError:
+    error: str
+
+
+CodeExplorerMsg = FileOpened | FileOpenError | FileClosed | QueryCompleted | QueryError
+
+
+# --- Update (pure) ---
+
+
+def update(
+    model: CodeExplorerModel, msg: CodeExplorerMsg
+) -> tuple[CodeExplorerModel, str]:
+    match msg:
+        case FileOpened(path=path, open_file=of, query_result=qr):
+            new_files = {**model.open_files, path: of}
+            new_results = {**model.query_results, path: qr}
+            return (
+                replace(model, open_files=new_files, query_results=new_results),
+                f"{path}:\n{qr}",
+            )
+        case FileOpenError(path=path, error=error):
+            return model, error
+        case FileClosed(path=path):
+            if path not in model.open_files:
+                return model, f"File not open: {path}"
+            new_files = {k: v for k, v in model.open_files.items() if k != path}
+            new_results = {k: v for k, v in model.query_results.items() if k != path}
+            return (
+                replace(model, open_files=new_files, query_results=new_results),
+                f"Closed: {path}",
+            )
+        case QueryCompleted(results=results):
+            new_results = {**model.query_results, **results}
+            text = "\n\n".join(f"{p}:\n{r}" for p, r in results.items())
+            return replace(model, query_results=new_results), text
+        case QueryError(error=error):
+            return model, error
+
+
+# --- Views ---
+
+_TOOL_DEFS = [
+    ToolDefinition(
+        name="open_file",
+        description=(
+            "Open a Python file for exploration. "
+            "Parses the file and shows top-level structure "
+            "(function/class signatures with body summaries)."
+        ),
+        parameters_json_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the Python file.",
                 },
-            ),
-            ToolDefinition(
-                name="close_file",
-                description="Close a file and remove it from the explorer.",
-                parameters_json_schema={
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "Path of the file to close.",
-                        },
-                    },
-                    "required": ["path"],
+            },
+            "required": ["path"],
+        },
+    ),
+    ToolDefinition(
+        name="close_file",
+        description="Close a file and remove it from the explorer.",
+        parameters_json_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path of the file to close.",
                 },
-            ),
-            ToolDefinition(
-                name="query",
-                description=(
-                    "Run a tree-sitter S-expression query against an open file. "
-                    "Returns matched code with signatures preserved and bodies "
-                    "replaced by summaries."
-                ),
-                parameters_json_schema={
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "Path of the open file to query.",
-                        },
-                        "query": {
-                            "type": "string",
-                            "description": "Tree-sitter S-expression query string.",
-                        },
-                    },
-                    "required": ["path", "query"],
+            },
+            "required": ["path"],
+        },
+    ),
+    ToolDefinition(
+        name="query",
+        description=(
+            "Run a tree-sitter S-expression query against an open file. "
+            "Returns matched code with signatures preserved and bodies "
+            "replaced by summaries."
+        ),
+        parameters_json_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path of the open file to query.",
                 },
-            ),
-            ToolDefinition(
-                name="query_all",
-                description=(
-                    "Run a tree-sitter S-expression query against all open files."
-                ),
-                parameters_json_schema={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Tree-sitter S-expression query string.",
-                        },
-                    },
-                    "required": ["query"],
+                "query": {
+                    "type": "string",
+                    "description": "Tree-sitter S-expression query string.",
                 },
-            ),
-        ]
-
-    def view_messages(self) -> Iterator[ModelMessage]:
-        if not self.open_files:
-            text = "## Code Explorer\nNo files open."
-        else:
-            lines = [
-                "## Code Explorer",
-                "",
-                "**All code bodies have been redacted.** "
-                "Signatures are shown verbatim; bodies are replaced with "
-                "`# [ CODE REDACTED ]` and a docstring describing what "
-                "the code does. Original comments and docstrings "
-                "have been removed.",
-                "",
-                f"{len(self.open_files)} file(s) open:",
-                "",
-            ]
-            for path in self.open_files:
-                lines.append(f"- `{path}`")
-                if path in self.query_results:
-                    lines.append("```python")
-                    lines.append(self.query_results[path])
-                    lines.append("```")
-            text = "\n".join(lines)
-        yield ModelRequest(parts=[UserPromptPart(content=text)])
-
-    def view_tools(self) -> Iterator[ToolDefinition]:
-        yield from self._tool_defs
-
-    def view_html(self) -> str:
-        if not self.open_files:
-            content = "<p><em>No files open</em></p>"
-        else:
-            parts = []
-            for path in self.open_files:
-                escaped_path = html_mod.escape(path)
-                # Show just the filename, full path in title
-                filename = Path(path).name
-                close_btn = (
-                    f"<button onclick=\"sendWidgetEvent('close_file', "
-                    f"{{path: '{html_mod.escape(path, quote=True)}'}})\""
-                    f' class="btn-remove" title="Close file">'
-                    f"&times;</button>"
-                )
-                parts.append(
-                    f'<div class="file-entry" title="{escaped_path}">'
-                    f"<code>{html_mod.escape(filename)}</code>"
-                    f"{close_btn}</div>"
-                )
-                if path in self.query_results:
-                    escaped_code = html_mod.escape(self.query_results[path])
-                    parts.append(f"<pre><code>{escaped_code}</code></pre>")
-            content = "".join(parts)
-        return (
-            f'<div id="{self.widget_id()}" class="widget">'
-            f"<h3>Code Explorer</h3>{content}</div>"
-        )
-
-    async def update(self, tool_name: str, args: dict) -> str:
-        if tool_name == "open_file":
-            return await self._open_file(args["path"])
-        if tool_name == "close_file":
-            return self._close_file(args["path"])
-        if tool_name == "query":
-            return await self._query(args["path"], args["query"])
-        if tool_name == "query_all":
-            return await self._query_all(args["query"])
-        raise NotImplementedError(f"CodeExplorer does not handle tool '{tool_name}'")
-
-    def frontend_tools(self) -> set[str]:
-        return {"close_file"}
-
-    async def _open_file(self, path: str) -> str:
-        p = Path(path)
-        if not p.is_file():
-            return f"File not found: {path}"
-        source = p.read_bytes()
-        tree = self._parser.parse(source)
-        self.open_files[path] = OpenFile(path=path, source=source, tree=tree)
-        return await self._query(path, _DEFAULT_QUERY)
-
-    def _close_file(self, path: str) -> str:
-        if path not in self.open_files:
-            return f"File not open: {path}"
-        del self.open_files[path]
-        self.query_results.pop(path, None)
-        return f"Closed: {path}"
-
-    async def _query(self, path: str, query_str: str) -> str:
-        if path not in self.open_files:
-            return f"File not open: {path}"
-        of = self.open_files[path]
-        try:
-            q = tree_sitter.Query(PY_LANGUAGE, query_str)
-        except tree_sitter.QueryError as e:
-            return f"Invalid query: {e}"
-        cursor = tree_sitter.QueryCursor(q)
-        captures = cursor.captures(of.tree.root_node)
-        if not captures:
-            self.query_results[path] = "(no matches)"
-            return f"{path}: no matches"
-        nodes = []
-        for node_list in captures.values():
-            nodes.extend(node_list)
-        nodes.sort(key=lambda n: n.start_byte)
-        # Deduplicate overlapping nodes (keep the outermost)
-        deduped = []
-        for node in nodes:
-            if deduped and node.start_byte < deduped[-1].end_byte:
-                continue
-            deduped.append(node)
-        code_parts = []
-        for node in deduped:
-            text = _strip_comments(node, of.source)
-            code_parts.append(text)
-        raw_code = "\n\n".join(code_parts)
-        result = await self._summarizer.run(raw_code)
-        self.query_results[path] = result.output
-        return f"{path}:\n{result.output}"
-
-    async def _query_all(self, query_str: str) -> str:
-        if not self.open_files:
-            return "No files open."
-        results = []
-        for path in list(self.open_files):
-            result = await self._query(path, query_str)
-            results.append(result)
-        return "\n\n".join(results)
+            },
+            "required": ["path", "query"],
+        },
+    ),
+    ToolDefinition(
+        name="query_all",
+        description=("Run a tree-sitter S-expression query against all open files."),
+        parameters_json_schema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Tree-sitter S-expression query string.",
+                },
+            },
+            "required": ["query"],
+        },
+    ),
+]
 
 
-def _extract_signatures(source: bytes, parser: tree_sitter.Parser) -> str:
-    """Parse summarizer output and keep only signatures and comments.
-
-    Strips any leaked code bodies the summarizer may have left in. For each
-    function/class definition, keeps the signature line and any comment nodes
-    from the body (which contain the [...REDACTED...] descriptions). Nested
-    definitions are processed recursively.
-    """
-    tree = parser.parse(source)
-    lines: list[str] = []
-    for child in tree.root_node.children:
-        if child.type in (
-            "function_definition",
-            "class_definition",
-            "decorated_definition",
-        ):
-            lines.extend(_format_def(child, source, indent=""))
-        elif child.type == "comment":
-            lines.append(child.text.decode())
-    return "\n".join(lines)
-
-
-def _format_def(node: tree_sitter.Node, source: bytes, indent: str) -> list[str]:
-    """Format a function/class/decorated definition as signature + comments."""
-    if node.type == "decorated_definition":
-        lines: list[str] = []
-        for child in node.children:
-            if child.type == "decorator":
-                lines.append(
-                    indent + source[child.start_byte : child.end_byte].decode().strip()
-                )
-            elif child.type in ("function_definition", "class_definition"):
-                lines.extend(_format_def(child, source, indent))
-        return lines
-
-    # function_definition or class_definition
-    block_node = None
-    for child in node.children:
-        if child.type == "block":
-            block_node = child
-            break
-
-    # Signature = everything from node start to the block
-    if block_node:
-        sig = source[node.start_byte : block_node.start_byte].decode().rstrip()
+def view_messages(model: CodeExplorerModel) -> Iterator[ModelMessage]:
+    if not model.open_files:
+        text = "## Code Explorer\nNo files open."
     else:
-        sig = source[node.start_byte : node.end_byte].decode().rstrip()
-    if not sig.endswith(":"):
-        sig += ":"
+        lines = [
+            "## Code Explorer",
+            "",
+            "**All code bodies have been redacted.** "
+            "Signatures are shown verbatim; bodies are replaced with "
+            "`# [ CODE REDACTED ]` and a docstring describing what "
+            "the code does. Original comments and docstrings "
+            "have been removed.",
+            "",
+            f"{len(model.open_files)} file(s) open:",
+            "",
+        ]
+        for path in model.open_files:
+            lines.append(f"- `{path}`")
+            if path in model.query_results:
+                lines.append("```python")
+                lines.append(model.query_results[path])
+                lines.append("```")
+        text = "\n".join(lines)
+    yield ModelRequest(parts=[UserPromptPart(content=text)])
 
-    lines = [indent + sig.strip()]
-    body_indent = indent + "    "
 
-    if block_node:
-        comments: list[str] = []
-        nested: list[tree_sitter.Node] = []
-        for child in block_node.children:
-            if child.type == "comment":
-                comments.append(child.text.decode())
-            elif child.type in (
-                "function_definition",
-                "class_definition",
-                "decorated_definition",
-            ):
-                nested.append(child)
+def view_tools(model: CodeExplorerModel) -> Iterator[ToolDefinition]:
+    yield from _TOOL_DEFS
 
-        if comments:
-            lines.append(body_indent + "[...REDACTED...] " + comments[0])
-            for c in comments[1:]:
-                lines.append(body_indent + c)
-        else:
-            lines.append(body_indent + "[...REDACTED...]")
 
-        for n in nested:
-            lines.append("")
-            lines.extend(_format_def(n, source, body_indent))
+def view_html(model: CodeExplorerModel) -> str:
+    if not model.open_files:
+        content = "<p><em>No files open</em></p>"
+    else:
+        parts = []
+        for path in model.open_files:
+            escaped_path = html_mod.escape(path)
+            filename = Path(path).name
+            close_btn = (
+                f"<button onclick=\"sendWidgetEvent('close_file', "
+                f"{{path: '{html_mod.escape(path, quote=True)}'}})\""
+                f' class="btn-remove" title="Close file">'
+                f"&times;</button>"
+            )
+            parts.append(
+                f'<div class="file-entry" title="{escaped_path}">'
+                f"<code>{html_mod.escape(filename)}</code>"
+                f"{close_btn}</div>"
+            )
+            if path in model.query_results:
+                escaped_code = html_mod.escape(model.query_results[path])
+                parts.append(f"<pre><code>{escaped_code}</code></pre>")
+        content = "".join(parts)
+    return (
+        '<div id="widget-code-explorer" class="widget">'
+        f"<h3>Code Explorer</h3>{content}</div>"
+    )
 
-    return lines
+
+# --- Anticorruption layers ---
+
+
+def _create_from_llm(parser: tree_sitter.Parser, summarizer: Agent):
+    """Create the from_llm closure with access to I/O resources."""
+
+    async def from_llm(
+        model: CodeExplorerModel, tool_name: str, args: dict
+    ) -> CodeExplorerMsg:
+        match tool_name:
+            case "open_file":
+                path = args["path"]
+                p = Path(path)
+                if not p.is_file():
+                    return FileOpenError(path=path, error=f"File not found: {path}")
+                source = p.read_bytes()
+                tree = parser.parse(source)
+                of = OpenFile(path=path, source=source, tree=tree)
+                qr = await _run_query(of, _DEFAULT_QUERY, summarizer)
+                return FileOpened(path=path, open_file=of, query_result=qr)
+
+            case "close_file":
+                return FileClosed(path=args["path"])
+
+            case "query":
+                path = args["path"]
+                if path not in model.open_files:
+                    return QueryError(error=f"File not open: {path}")
+                of = model.open_files[path]
+                result = await _run_query(of, args["query"], summarizer)
+                return QueryCompleted(results={path: result})
+
+            case "query_all":
+                if not model.open_files:
+                    return QueryError(error="No files open.")
+                results = {}
+                for path, of in model.open_files.items():
+                    results[path] = await _run_query(of, args["query"], summarizer)
+                return QueryCompleted(results=results)
+
+        raise ValueError(f"CodeExplorer: unknown tool '{tool_name}'")
+
+    return from_llm
+
+
+def from_ui(
+    model: CodeExplorerModel, event_name: str, args: dict
+) -> CodeExplorerMsg | None:
+    match event_name:
+        case "close_file":
+            return FileClosed(path=args["path"])
+    return None
+
+
+# --- I/O helpers ---
+
+
+async def _run_query(of: OpenFile, query_str: str, summarizer: Agent) -> str:
+    """Execute a tree-sitter query and summarize the results."""
+    try:
+        q = tree_sitter.Query(PY_LANGUAGE, query_str)
+    except tree_sitter.QueryError as e:
+        return f"Invalid query: {e}"
+    cursor = tree_sitter.QueryCursor(q)
+    captures = cursor.captures(of.tree.root_node)
+    if not captures:
+        return "(no matches)"
+    nodes = []
+    for node_list in captures.values():
+        nodes.extend(node_list)
+    nodes.sort(key=lambda n: n.start_byte)
+    deduped = []
+    for node in nodes:
+        if deduped and node.start_byte < deduped[-1].end_byte:
+            continue
+        deduped.append(node)
+    code_parts = [_strip_comments(node, of.source) for node in deduped]
+    raw_code = "\n\n".join(code_parts)
+    result = await summarizer.run(raw_code)
+    return result.output
 
 
 def _strip_comments(node: tree_sitter.Node, source: bytes) -> str:
@@ -332,7 +328,6 @@ def _strip_comments(node: tree_sitter.Node, source: bytes) -> str:
     start = node.start_byte
     end = node.end_byte
     node_source = source[start:end]
-    # Find comments/docstrings within this node's range
     cursor = tree_sitter.QueryCursor(_COMMENT_QUERY)
     captures = cursor.captures(node)
     removal_ranges = []
@@ -342,12 +337,30 @@ def _strip_comments(node: tree_sitter.Node, source: bytes) -> str:
             r_end = comment_node.end_byte - start
             if r_start >= 0 and r_end <= len(node_source):
                 removal_ranges.append((r_start, r_end))
-    # Sort descending so removals don't invalidate offsets
     removal_ranges.sort(reverse=True)
     result = bytearray(node_source)
     for r_start, r_end in removal_ranges:
         del result[r_start:r_end]
-    # Clean up blank lines left behind
     lines = result.decode(errors="replace").splitlines()
     cleaned = [line for line in lines if line.strip()]
     return "\n".join(cleaned)
+
+
+# --- Factory ---
+
+
+def create_code_explorer() -> WidgetHandle:
+    parser = tree_sitter.Parser(PY_LANGUAGE)
+    summarizer = create_summarizer_agent()
+
+    return create_widget(
+        id="widget-code-explorer",
+        model=CodeExplorerModel(),
+        update=update,
+        view_messages=view_messages,
+        view_tools=view_tools,
+        view_html=view_html,
+        from_llm=_create_from_llm(parser, summarizer),
+        from_ui=from_ui,
+        frontend_tools=frozenset({"close_file"}),
+    )

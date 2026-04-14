@@ -1,19 +1,22 @@
 """Base widget protocol for Calipso's context engineering architecture.
 
-Widgets are Elm-inspired components (State/View/Update) that compose into
-the model's context. Each widget:
+Widgets are Elm-inspired components (Model/Update/View) that compose into
+the model's context. Each widget is created via ``create_widget`` which
+produces a ``WidgetHandle``:
 
-- Holds internal state as dataclass fields
-- Provides view functions (generators yielding messages, tools, etc.)
-- Handles updates (tool calls, events) that mutate state
+- **Model**: a frozen dataclass holding internal state
+- **Update**: a pure function ``(model, msg) -> (model, result_str)``
+- **Views**: free functions ``model -> Iterator[T]`` or ``model -> str``
+- **Anticorruption layers**: ``from_llm`` (async) and ``from_ui`` (sync)
+  translate external events into typed Msg values
 
 View functions return Iterator[T] — composition uses ``yield from``
 which naturally flattens nested iterators (List monad join).
 """
 
-import re
-from collections.abc import Iterator
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Iterator
+from dataclasses import dataclass, field
+from typing import Any
 
 import markdown as md_lib
 from pydantic_ai.messages import ModelMessage
@@ -35,42 +38,152 @@ def render_md(text: str) -> str:
     return _md.convert(safe_text)
 
 
-@dataclass
-class Widget:
-    """Base class for all widgets.
+# ---------------------------------------------------------------------------
+# Default no-op functions for create_widget
+# ---------------------------------------------------------------------------
 
-    Subclasses override view and update methods as needed.
-    Not all widgets need all methods — a static widget may only
-    implement view_messages(), while an interactive widget will
-    also implement view_tools() and update().
+
+def _no_messages(_model: Any) -> Iterator[ModelMessage]:
+    return iter(())
+
+
+def _no_tools(_model: Any) -> Iterator[ToolDefinition]:
+    return iter(())
+
+
+def _default_view_html(widget_id: str) -> Callable[[Any], str]:
+    def _view_html(_model: Any) -> str:
+        return f'<div id="{widget_id}"></div>'
+
+    return _view_html
+
+
+async def _no_llm(_model: Any, _tool_name: str, _args: dict) -> Any:
+    raise NotImplementedError("This widget does not handle LLM tool calls")
+
+
+def _no_ui(_model: Any, _event_name: str, _args: dict) -> Any | None:
+    return None
+
+
+def _no_update(_model: Any, _msg: Any) -> tuple[Any, str]:
+    raise NotImplementedError("This widget does not handle updates")
+
+
+# ---------------------------------------------------------------------------
+# WidgetHandle — the uniform interface Context works with
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class WidgetHandle:
+    """A composed widget: model reference + function table.
+
+    Context interacts only with WidgetHandle instances. The handle wraps
+    a mutable model reference and delegates to pure functions for update
+    and views.
     """
 
+    id: str
+    _model: Any = field(repr=False)
+    _update_fn: Callable[[Any, Any], tuple[Any, str]] = field(repr=False)
+    _view_messages_fn: Callable[[Any], Iterator[ModelMessage]] = field(repr=False)
+    _view_tools_fn: Callable[[Any], Iterator[ToolDefinition]] = field(repr=False)
+    _view_html_fn: Callable[[Any], str] = field(repr=False)
+    _from_llm_fn: Callable[[Any, str, dict], Awaitable[Any]] = field(repr=False)
+    _from_ui_fn: Callable[[Any, str, dict], Any | None] = field(repr=False)
+    _frontend_tool_names: frozenset[str] = field(repr=False)
+
+    # -- Public model access ------------------------------------------------
+
+    @property
+    def model(self) -> Any:
+        """Read access to the current model.
+
+        Elm-style: parent can inspect child state.
+        """
+        return self._model
+
+    # -- Public interface (same names Context already calls) ----------------
+
     def widget_id(self) -> str:
-        """Stable HTML element ID for this widget (kebab-case from class name)."""
-        name = re.sub(r"(?<!^)(?=[A-Z])", "-", type(self).__name__).lower()
-        return f"widget-{name}"
+        return self.id
 
     def view_messages(self) -> Iterator[ModelMessage]:
-        """Yield messages that represent this widget in the context."""
-        return iter(())
+        return self._view_messages_fn(self._model)
 
     def view_tools(self) -> Iterator[ToolDefinition]:
-        """Yield tool definitions that this widget exposes."""
-        return iter(())
+        return self._view_tools_fn(self._model)
 
     def view_html(self) -> str:
-        """Return an HTML fragment for this widget's browser panel."""
-        return f'<div id="{self.widget_id()}"></div>'
+        return self._view_html_fn(self._model)
 
-    async def update(self, tool_name: str, args: dict) -> str:
-        """Handle a tool call directed at this widget.
+    def frontend_tools(self) -> frozenset[str]:
+        return self._frontend_tool_names
 
-        Returns the tool's response string.
+    # -- Dispatch methods ---------------------------------------------------
+
+    async def dispatch_llm(self, tool_name: str, args: dict) -> str:
+        """Dispatch an LLM tool call: from_llm -> update.
+
+        ValueError raised by from_llm is caught and returned as the
+        tool result string (validation errors at the boundary).
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not handle tool '{tool_name}'"
-        )
+        try:
+            msg = await self._from_llm_fn(self._model, tool_name, args)
+        except ValueError as e:
+            return str(e)
+        self._model, result = self._update_fn(self._model, msg)
+        return result
 
-    def frontend_tools(self) -> set[str]:
-        """Tool names callable from the browser. Default: none."""
-        return set()
+    def dispatch_ui(self, tool_name: str, args: dict) -> str | None:
+        """Dispatch a browser event: from_ui -> update.
+
+        Returns None if the tool is not frontend-callable or not recognized.
+        """
+        if tool_name not in self._frontend_tool_names:
+            return None
+        msg = self._from_ui_fn(self._model, tool_name, args)
+        if msg is None:
+            return None
+        self._model, result = self._update_fn(self._model, msg)
+        return result
+
+    def send(self, msg: Any) -> str:
+        """Send a Msg directly, bypassing anticorruption layers.
+
+        Standard Elm pattern: parent forwards messages to children.
+        """
+        self._model, result = self._update_fn(self._model, msg)
+        return result
+
+
+# ---------------------------------------------------------------------------
+# Factory function
+# ---------------------------------------------------------------------------
+
+
+def create_widget(
+    *,
+    id: str,
+    model: Any,
+    update: Callable[[Any, Any], tuple[Any, str]] = _no_update,
+    view_messages: Callable[[Any], Iterator[ModelMessage]] = _no_messages,
+    view_tools: Callable[[Any], Iterator[ToolDefinition]] = _no_tools,
+    view_html: Callable[[Any], str] | None = None,
+    from_llm: Callable[[Any, str, dict], Awaitable[Any]] = _no_llm,
+    from_ui: Callable[[Any, str, dict], Any | None] = _no_ui,
+    frontend_tools: frozenset[str] = frozenset(),
+) -> WidgetHandle:
+    """Create a WidgetHandle from an initial model and function table."""
+    return WidgetHandle(
+        id=id,
+        _model=model,
+        _update_fn=update,
+        _view_messages_fn=view_messages,
+        _view_tools_fn=view_tools,
+        _view_html_fn=view_html or _default_view_html(id),
+        _from_llm_fn=from_llm,
+        _from_ui_fn=from_ui,
+        _frontend_tool_names=frontend_tools,
+    )

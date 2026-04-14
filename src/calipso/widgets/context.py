@@ -12,17 +12,23 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import ToolDefinition
 
-from calipso.widget import Widget
-from calipso.widgets.conversation_log import ConversationLog, Segment
-from calipso.widgets.system_prompt import SystemPrompt
+from calipso.widget import WidgetHandle
+from calipso.widgets.conversation_log import (
+    ResponseReceived,
+    Segment,
+    ToolTracked,
+    UserMessageReceived,
+    check_protocol,
+    current_segment,
+)
 
 _STATE_BEGIN = "─── CURRENT STATE ───"
 _STATE_END = "─── END STATE ───"
 
 
 @dataclass
-class Context(Widget):
-    """Root widget that composes all child widgets.
+class Context:
+    """Root compositor that composes all child widgets.
 
     The runner only interacts with the Context — it doesn't know about
     the tree structure inside. The Context handles:
@@ -36,10 +42,10 @@ class Context(Widget):
     3. children (state panels, wrapped in markers)
     """
 
-    system_prompt: SystemPrompt = field(default_factory=SystemPrompt)
-    children: list[Widget] = field(default_factory=list)
-    conversation_log: ConversationLog = field(default_factory=ConversationLog)
-    _tool_owners: dict[str, Widget] = field(
+    system_prompt: WidgetHandle
+    children: list[WidgetHandle] = field(default_factory=list)
+    conversation_log: WidgetHandle = field(default_factory=lambda: None)  # type: ignore[assignment]
+    _tool_owners: dict[str, WidgetHandle] = field(
         init=False, repr=False, default_factory=dict
     )
     _html_cache: dict[str, str] = field(init=False, repr=False, default_factory=dict)
@@ -53,7 +59,7 @@ class Context(Widget):
             for tool_def in widget.view_tools():
                 self._tool_owners[tool_def.name] = widget
 
-    def _all_widgets(self) -> Iterator[Widget]:
+    def _all_widgets(self) -> Iterator[WidgetHandle]:
         yield self.system_prompt
         yield from self.children
         yield self.conversation_log
@@ -92,7 +98,7 @@ class Context(Widget):
         return result
 
     def add_user_message(self, text: str) -> None:
-        self.conversation_log.add_user_message(text)
+        self.conversation_log.send(UserMessageReceived(text=text))
 
     async def handle_response(
         self, response: ModelResponse
@@ -103,9 +109,8 @@ class Context(Widget):
         (tool_call_id, result_text) pairs and segment is the pinned segment
         that the response and tool results should be recorded in.
         """
-        # Pin the segment before dispatch — action_log_start/end may change
-        # the current segment, but response and tool results belong together.
-        segment = self.conversation_log._current_segment()
+        conv_model = self.conversation_log.model
+        segment = current_segment(conv_model)
 
         tool_results: list[tuple[str, str]] = []
 
@@ -117,7 +122,7 @@ class Context(Widget):
             args = part.args_as_dict()
 
             # Protocol enforcement
-            error = self.conversation_log.check_protocol(name)
+            error = check_protocol(self.conversation_log.model, name)
             if error is not None:
                 tool_results.append((part.tool_call_id, error))
                 continue
@@ -128,19 +133,19 @@ class Context(Widget):
                 tool_results.append((part.tool_call_id, f"Unknown tool: {name}"))
                 continue
 
-            result = await owner.update(name, args)
+            result = await owner.dispatch_llm(name, args)
             tool_results.append((part.tool_call_id, result))
 
             # Track non-action-log tools for protocol enforcement
             if owner is not self.conversation_log:
-                self.conversation_log.track_tool(name)
+                self.conversation_log.send(ToolTracked(tool_name=name))
 
         # Record the response in the pinned segment
-        self.conversation_log.add_response(response, segment)
+        self.conversation_log.send(ResponseReceived(response=response, segment=segment))
 
         return tool_results, segment
 
-    async def handle_widget_event(self, tool_name: str, args: dict) -> str | None:
+    def handle_widget_event(self, tool_name: str, args: dict) -> str | None:
         """Handle a frontend-initiated widget event.
 
         Bypasses the action log protocol. Returns the update result,
@@ -149,6 +154,4 @@ class Context(Widget):
         owner = self._tool_owners.get(tool_name)
         if owner is None:
             return None
-        if tool_name not in owner.frontend_tools():
-            return None
-        return await owner.update(tool_name, args)
+        return owner.dispatch_ui(tool_name, args)

@@ -152,12 +152,19 @@ class CodeExplorer(Widget):
             parts = []
             for path in self.open_files:
                 escaped_path = html_mod.escape(path)
+                # Show just the filename, full path in title
+                filename = Path(path).name
                 close_btn = (
-                    f" <button onclick=\"sendWidgetEvent('close_file', "
+                    f"<button onclick=\"sendWidgetEvent('close_file', "
                     f"{{path: '{html_mod.escape(path, quote=True)}'}})\""
-                    f' class="btn-remove" title="Close file">x</button>'
+                    f' class="btn-remove" title="Close file">'
+                    f"&times;</button>"
                 )
-                parts.append(f"<div><code>{escaped_path}</code>{close_btn}</div>")
+                parts.append(
+                    f'<div class="file-entry" title="{escaped_path}">'
+                    f"<code>{html_mod.escape(filename)}</code>"
+                    f"{close_btn}</div>"
+                )
                 if path in self.query_results:
                     rendered = render_md(f"```python\n{self.query_results[path]}\n```")
                     parts.append(rendered)

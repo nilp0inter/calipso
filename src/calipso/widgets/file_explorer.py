@@ -19,8 +19,7 @@ class FileExplorerModel:
     listing_path: str | None = None
     listing_entries: tuple[tuple[str, bool], ...] | None = None
     listing_text: str | None = None
-    open_file_path: str | None = None
-    open_file_content: str | None = None
+    open_files: tuple[tuple[str, str], ...] = ()
 
 
 # --- Messages ---
@@ -51,6 +50,7 @@ class FileReadError:
 
 @dataclass(frozen=True)
 class CloseReadFile:
+    path: str
     initiator: Initiator
 
 
@@ -112,18 +112,30 @@ def update(
         case DirectoryListError(error=error):
             return model, tool_result(error)
         case FileRead(path=path, content=content):
+            existing = tuple(
+                (p, c) for p, c in model.open_files if p != path
+            )
             return (
-                replace(model, open_file_path=path, open_file_content=content),
+                replace(
+                    model,
+                    open_files=existing + ((path, content),),
+                ),
                 tool_result(content),
             )
         case FileReadError(error=error):
             return model, tool_result(error)
-        case CloseReadFile(initiator=init):
-            if model.open_file_path is None:
+        case CloseReadFile(path=path, initiator=init):
+            if not any(p == path for p, _ in model.open_files):
                 return model, for_initiator(init, "No file is open.")
-            path = model.open_file_path
             return (
-                replace(model, open_file_path=None, open_file_content=None),
+                replace(
+                    model,
+                    open_files=tuple(
+                        (p, c)
+                        for p, c in model.open_files
+                        if p != path
+                    ),
+                ),
                 for_initiator(init, f"Closed: {path}"),
             )
 
@@ -167,8 +179,17 @@ _TOOL_DEFS = [
     ),
     ToolDefinition(
         name="close_read_file",
-        description="Close the currently open file in the File Explorer.",
-        parameters_json_schema={"type": "object", "properties": {}},
+        description="Close an open file in the File Explorer.",
+        parameters_json_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path of the file to close.",
+                },
+            },
+            "required": ["path"],
+        },
     ),
 ]
 
@@ -178,13 +199,13 @@ def view_messages(model: FileExplorerModel) -> Iterator[ModelMessage]:
     if model.listing_text is not None:
         lines.append("")
         lines.append(model.listing_text)
-    if model.open_file_path is not None:
+    for path, content in model.open_files:
         lines.append("")
-        lines.append(f"**Open file:** `{model.open_file_path}`")
+        lines.append(f"**Open file:** `{path}`")
         lines.append("```")
-        lines.append(model.open_file_content or "")
+        lines.append(content)
         lines.append("```")
-    if model.listing_text is None and model.open_file_path is None:
+    if model.listing_text is None and not model.open_files:
         lines.append("No file open.")
     yield ModelRequest(parts=[UserPromptPart(content="\n".join(lines))])
 
@@ -196,28 +217,51 @@ def view_tools(model: FileExplorerModel) -> Iterator[ToolDefinition]:
 def view_html(model: FileExplorerModel) -> str:
     parts = []
 
+    root_btn = (
+        "<button onclick=\"sendWidgetEvent('list_directory', {path: '.'})\""
+        ' class="btn-root">Root</button>'
+    )
+    parts.append(root_btn)
+
     if model.listing_entries is not None:
+        listing_path = model.listing_path or "."
         items = []
         for name, is_dir in model.listing_entries:
-            escaped = html_mod.escape(name)
-            cls = "entry-dir" if is_dir else "entry-file"
-            suffix = "/" if is_dir else ""
-            items.append(f'<li class="{cls}">{escaped}{suffix}</li>')
-        header = html_mod.escape(model.listing_path or ".")
+            escaped_name = html_mod.escape(name)
+            child_path = f"{listing_path}/{name}"
+            escaped_path = html_mod.escape(child_path, quote=True)
+            if is_dir:
+                items.append(
+                    f'<li class="entry-dir" ondblclick="'
+                    f"sendWidgetEvent('list_directory', "
+                    f"{{path: '{escaped_path}'}})"
+                    f'" style="cursor:pointer">'
+                    f"{escaped_name}/</li>"
+                )
+            else:
+                items.append(
+                    f'<li class="entry-file" ondblclick="'
+                    f"sendWidgetEvent('read_file', "
+                    f"{{path: '{escaped_path}'}})"
+                    f'" style="cursor:pointer">'
+                    f"{escaped_name}</li>"
+                )
+        header = html_mod.escape(listing_path)
         parts.append(
             f"<p><strong>{header}</strong></p>"
             f'<ul class="dir-listing">{"".join(items)}</ul>'
         )
 
-    if model.open_file_path is not None:
-        filename = Path(model.open_file_path).name
-        escaped_path = html_mod.escape(model.open_file_path)
+    for file_path, file_content in model.open_files:
+        filename = Path(file_path).name
+        escaped_path = html_mod.escape(file_path, quote=True)
         close_btn = (
-            "<button onclick=\"sendWidgetEvent('close_read_file', {})\""
+            "<button onclick=\"sendWidgetEvent('close_read_file',"
+            f" {{path: '{escaped_path}'}})\""
             ' class="btn-remove" title="Close file">'
             "&times;</button>"
         )
-        escaped_content = html_mod.escape(model.open_file_content or "")
+        escaped_content = html_mod.escape(file_content)
         parts.append(
             f'<div class="file-entry" title="{escaped_path}">'
             f"<code>{html_mod.escape(filename)}</code>"
@@ -225,10 +269,7 @@ def view_html(model: FileExplorerModel) -> str:
             f"<pre><code>{escaped_content}</code></pre>"
         )
 
-    if not parts:
-        content = "<p><em>No file open</em></p>"
-    else:
-        content = "".join(parts)
+    content = "".join(parts)
 
     return (
         '<div id="widget-file-explorer" class="widget">'
@@ -246,7 +287,9 @@ def from_llm(model: FileExplorerModel, tool_name: str, args: dict) -> FileExplor
         case "read_file":
             return ReadFileRequested(path=args["path"])
         case "close_read_file":
-            return CloseReadFile(initiator=Initiator.LLM)
+            return CloseReadFile(
+                path=args["path"], initiator=Initiator.LLM
+            )
     raise ValueError(f"FileExplorer: unknown tool '{tool_name}'")
 
 
@@ -254,8 +297,14 @@ def from_ui(
     model: FileExplorerModel, event_name: str, args: dict
 ) -> FileExplorerMsg | None:
     match event_name:
+        case "list_directory":
+            return ListDirectoryRequested(path=args.get("path", "."))
+        case "read_file":
+            return ReadFileRequested(path=args["path"])
         case "close_read_file":
-            return CloseReadFile(initiator=Initiator.UI)
+            return CloseReadFile(
+                path=args["path"], initiator=Initiator.UI
+            )
     return None
 
 
@@ -302,5 +351,5 @@ def create_file_explorer() -> WidgetHandle:
         view_html=view_html,
         from_llm=from_llm,
         from_ui=from_ui,
-        frontend_tools=frozenset({"close_read_file"}),
+        frontend_tools=frozenset({"list_directory", "read_file", "close_read_file"}),
     )

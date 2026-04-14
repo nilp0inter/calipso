@@ -444,14 +444,13 @@ class TestFileExplorer:
         f.write_text("# Hello")
         result = await w.dispatch_llm("read_file", {"path": str(f)})
         assert result == "# Hello"
-        assert w.model.open_file_path == str(f)
-        assert w.model.open_file_content == "# Hello"
+        assert w.model.open_files == ((str(f), "# Hello"),)
 
     async def test_read_file_rejects_python(self):
         w = create_file_explorer()
         result = await w.dispatch_llm("read_file", {"path": "foo.py"})
         assert "Code Explorer" in result
-        assert w.model.open_file_path is None
+        assert w.model.open_files == ()
 
     async def test_read_file_not_found(self):
         w = create_file_explorer()
@@ -463,15 +462,18 @@ class TestFileExplorer:
         f = tmp_path / "data.json"
         f.write_text("{}")
         await w.dispatch_llm("read_file", {"path": str(f)})
-        assert w.model.open_file_path is not None
-        result = await w.dispatch_llm("close_read_file", {})
+        assert len(w.model.open_files) == 1
+        result = await w.dispatch_llm(
+            "close_read_file", {"path": str(f)}
+        )
         assert "Closed" in result
-        assert w.model.open_file_path is None
-        assert w.model.open_file_content is None
+        assert w.model.open_files == ()
 
     async def test_close_read_file_when_none_open(self):
         w = create_file_explorer()
-        result = await w.dispatch_llm("close_read_file", {})
+        result = await w.dispatch_llm(
+            "close_read_file", {"path": "nope.txt"}
+        )
         assert "No file is open" in result
 
     def test_view_messages_empty(self):
@@ -498,7 +500,7 @@ class TestFileExplorer:
     def test_view_html_empty(self):
         w = create_file_explorer()
         html = w.view_html()
-        assert "No file open" in html
+        assert "Root" in html
         assert w.widget_id() in html
 
     def test_view_html_with_file(self):
@@ -524,4 +526,6 @@ class TestFileExplorer:
 
     def test_frontend_tools(self):
         w = create_file_explorer()
-        assert w.frontend_tools() == frozenset({"close_read_file"})
+        assert w.frontend_tools() == frozenset(
+            {"list_directory", "read_file", "close_read_file"}
+        )

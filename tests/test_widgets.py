@@ -200,7 +200,7 @@ class TestTaskList:
 
     def test_frontend_tools(self):
         w = create_task_list()
-        assert w.frontend_tools() == frozenset({"update_task_status", "remove_task"})
+        assert w.frontend_tools() == frozenset({"create_task", "update_task_status", "remove_task"})
 
 
 # --- ConversationLog ---

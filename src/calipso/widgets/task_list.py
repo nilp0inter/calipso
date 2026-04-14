@@ -47,6 +47,7 @@ class TaskListModel:
 @dataclass(frozen=True)
 class CreateTask:
     description: str
+    initiator: Initiator
 
 
 @dataclass(frozen=True)
@@ -70,11 +71,11 @@ TaskListMsg = CreateTask | UpdateTaskStatus | RemoveTask
 
 def update(model: TaskListModel, msg: TaskListMsg) -> tuple[TaskListModel, Cmd]:
     match msg:
-        case CreateTask(description=desc):
+        case CreateTask(description=desc, initiator=init):
             task = Task(id=model.next_id, description=desc)
             return (
                 replace(model, tasks=(*model.tasks, task), next_id=model.next_id + 1),
-                tool_result(f"Created task {task.id}: {task.description}"),
+                for_initiator(init, f"Created task {task.id}: {task.description}"),
             )
         case UpdateTaskStatus(task_id=tid, status=new_status, initiator=init):
             new_tasks = []
@@ -197,7 +198,17 @@ def view_html(model: TaskListModel) -> str:
                 f"</li>"
             )
         items = "<ul>" + "".join(lines) + "</ul>"
-    return f'<div id="widget-task-list" class="widget"><h3>Tasks</h3>{items}</div>'
+    form = (
+        '<div class="task-add">'
+        '<input type="text" class="task-input"'
+        ' placeholder="Add a task..."'
+        " onkeydown=\"if(event.key==='Enter'){"
+        "sendWidgetEvent('create_task',"
+        "{description:this.value});this.value='';}\""
+        ">"
+        "</div>"
+    )
+    return f'<div id="widget-task-list" class="widget"><h3>Tasks</h3>{items}{form}</div>'
 
 
 # --- Anticorruption layers ---
@@ -206,7 +217,7 @@ def view_html(model: TaskListModel) -> str:
 def from_llm(model: TaskListModel, tool_name: str, args: dict) -> TaskListMsg:
     match tool_name:
         case "create_task":
-            return CreateTask(description=args["description"])
+            return CreateTask(description=args["description"], initiator=Initiator.LLM)
         case "update_task_status":
             try:
                 status = TaskStatus(args["status"])
@@ -223,6 +234,11 @@ def from_llm(model: TaskListModel, tool_name: str, args: dict) -> TaskListMsg:
 
 def from_ui(model: TaskListModel, event_name: str, args: dict) -> TaskListMsg | None:
     match event_name:
+        case "create_task":
+            desc = args.get("description", "").strip()
+            if not desc:
+                return None
+            return CreateTask(description=desc, initiator=Initiator.UI)
         case "update_task_status":
             try:
                 status = TaskStatus(args["status"])
@@ -249,5 +265,5 @@ def create_task_list() -> WidgetHandle:
         view_html=view_html,
         from_llm=from_llm,
         from_ui=from_ui,
-        frontend_tools=frozenset({"update_task_status", "remove_task"}),
+        frontend_tools=frozenset({"create_task", "update_task_status", "remove_task"}),
     )

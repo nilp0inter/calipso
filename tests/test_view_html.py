@@ -73,9 +73,10 @@ class TestSystemPromptHtml:
         assert "<script>" not in html
         assert "&lt;script&gt;" in html
 
-    def test_renders_markdown(self):
+    def test_textarea_contains_text(self):
         html = sp_view_html(SystemPromptModel(text="**bold**"))
-        assert "<strong>bold</strong>" in html
+        assert "<textarea" in html
+        assert "**bold**" in html
 
 
 class TestGoalHtml:

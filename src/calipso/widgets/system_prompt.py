@@ -1,11 +1,13 @@
-"""SystemPrompt widget — static identity and framing text."""
+"""SystemPrompt widget — identity and framing text, editable from the UI."""
 
+import html as html_mod
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 
-from calipso.widget import WidgetHandle, create_widget, render_md
+from calipso.cmd import Cmd, none
+from calipso.widget import WidgetHandle, create_widget
 
 _DEFAULT_TEXT = (
     "You are Calipso, an AI coding assistant.\n"
@@ -37,6 +39,35 @@ class SystemPromptModel:
     text: str = _DEFAULT_TEXT
 
 
+# --- Messages ---
+
+
+@dataclass(frozen=True)
+class SetSystemPrompt:
+    text: str
+
+
+@dataclass(frozen=True)
+class ResetSystemPrompt:
+    pass
+
+
+SystemPromptMsg = SetSystemPrompt | ResetSystemPrompt
+
+
+# --- Update (pure) ---
+
+
+def update(
+    model: SystemPromptModel, msg: SystemPromptMsg
+) -> tuple[SystemPromptModel, Cmd]:
+    match msg:
+        case SetSystemPrompt(text=text):
+            return replace(model, text=text), none
+        case ResetSystemPrompt():
+            return replace(model, text=_DEFAULT_TEXT), none
+
+
 # --- Views ---
 
 
@@ -45,12 +76,39 @@ def view_messages(model: SystemPromptModel) -> Iterator[ModelMessage]:
 
 
 def view_html(model: SystemPromptModel) -> str:
+    escaped = html_mod.escape(model.text, quote=True)
+    form = (
+        '<div class="system-prompt-edit">'
+        f'<textarea class="system-prompt-textarea" rows="10">{escaped}</textarea>'
+        ' <button onclick="'
+        "sendWidgetEvent('set_system_prompt',"
+        " {text: this.parentElement.querySelector('textarea').value})"
+        '">Save</button>'
+        ' <button onclick="'
+        "sendWidgetEvent('reset_system_prompt', {})"
+        '">Reset</button>'
+        "</div>"
+    )
     return (
         '<div id="widget-system-prompt" class="widget">'
         f"<h3>System Prompt</h3>"
-        f"{render_md(model.text)}"
+        f"{form}"
         "</div>"
     )
+
+
+# --- Anticorruption layers ---
+
+
+def from_ui(
+    model: SystemPromptModel, event_name: str, args: dict
+) -> SystemPromptMsg | None:
+    match event_name:
+        case "set_system_prompt":
+            return SetSystemPrompt(text=args["text"])
+        case "reset_system_prompt":
+            return ResetSystemPrompt()
+    return None
 
 
 # --- Factory ---
@@ -60,6 +118,9 @@ def create_system_prompt(text: str = _DEFAULT_TEXT) -> WidgetHandle:
     return create_widget(
         id="widget-system-prompt",
         model=SystemPromptModel(text=text),
+        update=update,
         view_messages=view_messages,
         view_html=view_html,
+        from_ui=from_ui,
+        frontend_tools=frozenset({"set_system_prompt", "reset_system_prompt"}),
     )

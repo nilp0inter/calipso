@@ -59,6 +59,8 @@ class Context:
         for widget in self._all_widgets():
             for tool_def in widget.view_tools():
                 self._tool_owners[tool_def.name] = widget
+            for name in widget.frontend_tools():
+                self._tool_owners.setdefault(name, widget)
         # Conversation log owns all step tools even when not
         # currently exposed (view_tools is state-dependent).
         # We register them so dispatch can find the owner, but

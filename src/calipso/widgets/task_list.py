@@ -8,7 +8,7 @@ from enum import StrEnum
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.tools import ToolDefinition
 
-from calipso.cmd import Cmd, Initiator, for_initiator, tool_result
+from calipso.cmd import Cmd, Initiator, for_initiator
 from calipso.widget import WidgetHandle, create_widget
 
 

@@ -26,6 +26,8 @@ Run a single test:
 uv run pytest tests/test_widgets.py::TestConversationLog
 ```
 
+**Before committing**, always run `task format` and `task lint` to catch formatting and lint issues.
+
 ## Architecture
 
 - **Model setup** (`src/calipso/model.py`): configures the Pydantic AI `Model` instance (OpenRouter provider). No `Agent` — we call `Model.request()` directly.

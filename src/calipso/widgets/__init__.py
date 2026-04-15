@@ -8,6 +8,7 @@ from calipso.widgets.goal import create_goal
 from calipso.widgets.system_prompt import create_system_prompt
 from calipso.widgets.task_list import create_task_list
 from calipso.widgets.test_suite import create_test_suite
+from calipso.widgets.token_usage import create_token_usage
 
 __all__ = [
     "Context",
@@ -20,4 +21,5 @@ __all__ = [
     "create_system_prompt",
     "create_task_list",
     "create_test_suite",
+    "create_token_usage",
 ]

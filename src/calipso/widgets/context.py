@@ -22,6 +22,7 @@ from calipso.widgets.conversation_log import (
     check_protocol,
     current_segment,
 )
+from calipso.widgets.token_usage import UsageRecorded
 
 _STATE_BEGIN = "─── CURRENT STATE ───"
 _STATE_END = "─── END STATE ───"
@@ -46,6 +47,7 @@ class Context:
     system_prompt: WidgetHandle
     children: list[WidgetHandle] = field(default_factory=list)
     conversation_log: WidgetHandle = field(default_factory=lambda: None)  # type: ignore[assignment]
+    token_usage: WidgetHandle | None = None
     _tool_owners: dict[str, WidgetHandle] = field(
         init=False, repr=False, default_factory=dict
     )
@@ -75,6 +77,8 @@ class Context:
     def _all_widgets(self) -> Iterator[WidgetHandle]:
         yield self.system_prompt
         yield from self.children
+        if self.token_usage is not None:
+            yield self.token_usage
         yield self.conversation_log
 
     def view_messages(self) -> Iterator[ModelMessage]:
@@ -186,6 +190,18 @@ class Context:
             # Track non-action-log tools for protocol enforcement
             if owner is not self.conversation_log:
                 self.conversation_log.send(ToolTracked(tool_name=name))
+
+        # Record token usage
+        if self.token_usage is not None:
+            usage = response.usage
+            self.token_usage.send(
+                UsageRecorded(
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    cache_read_tokens=usage.cache_read_tokens,
+                    cache_write_tokens=usage.cache_write_tokens,
+                )
+            )
 
         # Record the response in the pinned segment
         self.conversation_log.send(ResponseReceived(response=response, segment=segment))

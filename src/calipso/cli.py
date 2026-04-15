@@ -19,6 +19,7 @@ from calipso.widgets import (
     create_system_prompt,
     create_task_list,
     create_test_suite,
+    create_token_usage,
 )
 
 PROMPT_DIR = Path("prompts")
@@ -88,6 +89,7 @@ async def async_main():
             create_test_suite(),
         ],
         conversation_log=create_conversation_log(),
+        token_usage=create_token_usage(),
     )
 
     server = DashboardServer(context)

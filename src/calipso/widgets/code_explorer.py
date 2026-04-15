@@ -160,7 +160,7 @@ def _create_update(parser: tree_sitter.Parser, summarizer: Agent):
                 new_results = {**model.query_results, path: qr}
                 return (
                     replace(model, open_files=new_files, query_results=new_results),
-                    tool_result(f"{path}:\n{qr}"),
+                    tool_result(f"Opened: {path}"),
                 )
             case FileOpenError(path=path, error=error):
                 return model, tool_result(error)

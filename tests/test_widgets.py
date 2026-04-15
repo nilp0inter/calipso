@@ -454,9 +454,9 @@ class TestFileExplorer:
         sub.mkdir()
         (tmp_path / "file.txt").write_text("hello")
         result = await w.dispatch_llm("list_directory", {"path": str(tmp_path)})
-        assert "subdir/" in result
-        assert "file.txt" in result
-        assert w.model.listing_text is not None
+        assert result == f"Listed: {tmp_path}"
+        assert "subdir/" in w.model.listing_text
+        assert "file.txt" in w.model.listing_text
 
     async def test_list_directory_not_a_dir(self, tmp_path: Path):
         w = create_file_explorer()
@@ -470,7 +470,7 @@ class TestFileExplorer:
         f = tmp_path / "readme.md"
         f.write_text("# Hello")
         result = await w.dispatch_llm("read_file", {"path": str(f)})
-        assert result == "# Hello"
+        assert result == f"Opened: {f}"
         assert w.model.open_files == ((str(f), "# Hello"),)
 
     async def test_read_file_rejects_python(self):

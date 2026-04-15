@@ -357,7 +357,8 @@ def view_html(model: ConversationLogModel) -> str:
             user_html = render_md(turn.user_message)
             parts.append(
                 f'<div class="msg sent">'
-                f'<span class="dir">&#9650;</span> {user_html}'
+                f'<span class="bubble-label">You</span>'
+                f"{user_html}"
                 f"</div>"
             )
             for segment in turn.segments:
@@ -382,9 +383,21 @@ def view_html(model: ConversationLogModel) -> str:
                         tool_parts.extend(tl)
                     parts.extend(text_parts)
                     if tool_parts:
+                        tool_call_count = sum(
+                            1
+                            for m in segment.messages
+                            if isinstance(m, ModelResponse)
+                            for p in m.parts
+                            if isinstance(p, ToolCallPart)
+                        )
+                        label = (
+                            "1 tool call"
+                            if tool_call_count == 1
+                            else f"{tool_call_count} tool calls"
+                        )
                         parts.append(
-                            '<details class="tool-group" open>'
-                            "<summary>Tool calls</summary>"
+                            '<details class="tool-group">'
+                            f"<summary>{label}</summary>"
                             f"{''.join(tool_parts)}"
                             "</details>"
                         )
@@ -434,7 +447,7 @@ def _split_message(
                 rendered = render_md(part.content)
                 text.append(
                     f'<div class="msg received assistant">'
-                    f'<span class="dir">&#9660;</span> '
+                    f'<span class="bubble-label">Agent</span>'
                     f"{rendered}</div>"
                 )
             elif isinstance(part, ToolCallPart):

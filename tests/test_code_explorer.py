@@ -102,8 +102,7 @@ class TestOpenFile:
         result = await explorer.dispatch_llm("open_file", {"path": sample_file})
         assert sample_file in explorer.model.open_files
         assert sample_file in explorer.model.query_results
-        assert "def greet" in result
-        assert "[...REDACTED...]" in result
+        assert result == f"Opened: {sample_file}"
 
     async def test_open_nonexistent_file(self, explorer):
         result = await explorer.dispatch_llm("open_file", {"path": "/nonexistent.py"})

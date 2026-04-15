@@ -200,33 +200,52 @@
 
         /* Message styles */
         .msg {
-            padding: 0.3rem 0.5rem;
+            padding: 0.4rem 0.6rem;
             font-size: 0.9rem;
-            border-radius: 4px;
-            margin: 0.15rem 0;
+            border-radius: 8px;
+            margin: 0.25rem 0;
+            max-width: 80%;
+            background: #f3f4f6;
+        }
+        .msg .bubble-label {
+            display: block;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #888;
+            margin-bottom: 0.15rem;
+        }
+        .msg.sent {
+            margin-left: auto;
+            border-bottom-right-radius: 2px;
+        }
+        .msg.received {
+            margin-right: auto;
+            border-bottom-left-radius: 2px;
+        }
+        .msg.summary {
+            color: #666;
+            font-style: italic;
+            font-size: 0.85rem;
+            margin-right: auto;
+        }
+        .msg.tool-call, .msg.tool-result {
+            max-width: 100%;
+        }
+        .msg.tool-call {
+            background: #f0fdf4;
+            border-left: 3px solid #16a34a;
+        }
+        .msg.tool-result {
+            background: #eff6ff;
+            border-left: 3px solid #2563eb;
         }
         .msg .dir {
             display: inline-block;
             width: 1em;
             font-size: 0.7rem;
         }
-        .msg.sent {
-            background: #eff6ff;
-            border-left: 3px solid #2563eb;
-        }
-        .msg.sent .dir { color: #2563eb; }
-        .msg.received {
-            background: #f0fdf4;
-            border-left: 3px solid #16a34a;
-        }
-        .msg.received .dir { color: #16a34a; }
-        .msg.summary {
-            color: #666;
-            font-style: italic;
-            font-size: 0.85rem;
-            background: #f9fafb;
-            border-left: 3px solid #d1d5db;
-        }
+        .msg.tool-call .dir { color: #16a34a; }
+        .msg.tool-result .dir { color: #2563eb; }
         .msg.tool-call code, .msg.tool-result code {
             font-size: 0.8rem;
             color: #666;

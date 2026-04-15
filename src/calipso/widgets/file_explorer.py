@@ -107,7 +107,7 @@ def update(
                     listing_entries=entries,
                     listing_text=text,
                 ),
-                tool_result(text),
+                tool_result(f"Listed: {path}"),
             )
         case DirectoryListError(error=error):
             return model, tool_result(error)
@@ -120,7 +120,7 @@ def update(
                     model,
                     open_files=existing + ((path, content),),
                 ),
-                tool_result(content),
+                tool_result(f"Opened: {path}"),
             )
         case FileReadError(error=error):
             return model, tool_result(error)

@@ -24,6 +24,10 @@ flowchart TB
     Context -- "3. children (state panels)" --> AgentsMd["AgentsMd"]
     Context -- "3. children (state panels)" --> Goal["Goal"]
     Context -- "3. children (state panels)" --> TL["TaskList"]
+    Context -- "3. children (state panels)" --> CE["CodeExplorer"]
+    Context -- "3. children (state panels)" --> FE["FileExplorer"]
+    Context -- "3. children (state panels)" --> TS["TestSuite"]
+    Context -- "4. token_usage" --> TU["TokenUsage"]
     Context -- "view_messages()\nview_tools()" --> Runner["Runner"]
     Runner -- "Model.request()" --> LLM["LLM"]
     LLM -- "tool calls" --> Runner

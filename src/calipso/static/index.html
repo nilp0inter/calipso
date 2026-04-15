@@ -190,14 +190,65 @@
         .task-done label { text-decoration: line-through; color: #999; }
         .task-in_progress label { color: #b45309; }
 
+        /* Turn styles */
+        .turn { padding: 0.3rem 0; }
+        .turn-sep {
+            border: none;
+            border-top: 1px solid #e0e0e0;
+            margin: 0.5rem 0;
+        }
+
         /* Message styles */
-        .msg { padding: 0.4rem 0; font-size: 0.9rem; }
-        .msg.user { color: #2563eb; }
-        .msg.assistant { color: #1a1a1a; }
-        .msg.summary { color: #666; font-style: italic; font-size: 0.85rem; }
+        .msg {
+            padding: 0.3rem 0.5rem;
+            font-size: 0.9rem;
+            border-radius: 4px;
+            margin: 0.15rem 0;
+        }
+        .msg .dir {
+            display: inline-block;
+            width: 1em;
+            font-size: 0.7rem;
+        }
+        .msg.sent {
+            background: #eff6ff;
+            border-left: 3px solid #2563eb;
+        }
+        .msg.sent .dir { color: #2563eb; }
+        .msg.received {
+            background: #f0fdf4;
+            border-left: 3px solid #16a34a;
+        }
+        .msg.received .dir { color: #16a34a; }
+        .msg.summary {
+            color: #666;
+            font-style: italic;
+            font-size: 0.85rem;
+            background: #f9fafb;
+            border-left: 3px solid #d1d5db;
+        }
         .msg.tool-call code, .msg.tool-result code {
             font-size: 0.8rem;
-            color: #888;
+            color: #666;
+        }
+
+        /* Collapsible tool groups */
+        .tool-group {
+            margin: 0.25rem 0 0.25rem 1.2rem;
+            border-left: 2px solid #d1d5db;
+            padding-left: 0.5rem;
+        }
+        .tool-group > summary {
+            cursor: pointer;
+            font-size: 0.85rem;
+            color: #666;
+            font-style: italic;
+            padding: 0.2rem 0;
+            user-select: none;
+        }
+        .tool-group > summary:hover { color: #333; }
+        .tool-group .msg {
+            margin-left: 0;
         }
 
         /* Goal edit */

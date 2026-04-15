@@ -14,6 +14,7 @@ from pydantic_ai.tools import ToolDefinition
 
 from calipso.widget import WidgetHandle
 from calipso.widgets.conversation_log import (
+    ALL_CONVERSATION_LOG_TOOLS,
     ResponseReceived,
     Segment,
     ToolTracked,
@@ -58,6 +59,18 @@ class Context:
         for widget in self._all_widgets():
             for tool_def in widget.view_tools():
                 self._tool_owners[tool_def.name] = widget
+        # Conversation log owns all step tools even when not
+        # currently exposed (view_tools is state-dependent).
+        # We register them so dispatch can find the owner, but
+        # _currently_exposed_step_tools() gates actual execution.
+        for name in ALL_CONVERSATION_LOG_TOOLS:
+            self._tool_owners[name] = self.conversation_log
+
+    def _currently_exposed_step_tools(self) -> frozenset[str]:
+        """Return step tool names currently exposed to the LLM."""
+        return frozenset(
+            t.name for t in self.conversation_log.view_tools()
+        )
 
     def _all_widgets(self) -> Iterator[WidgetHandle]:
         yield self.system_prompt
@@ -114,12 +127,42 @@ class Context:
 
         tool_results: list[tuple[str, str]] = []
 
+        # Pre-scan: end_step must appear at most once and be first
+        tool_call_parts = [p for p in response.parts if isinstance(p, ToolCallPart)]
+        action_end_count = sum(
+            1 for p in tool_call_parts if p.tool_name == "end_step"
+        )
+        reject_action_end = action_end_count > 1 or (
+            action_end_count == 1 and tool_call_parts[0].tool_name != "end_step"
+        )
+
         for part in response.parts:
             if not isinstance(part, ToolCallPart):
                 continue
 
             name = part.tool_name
             args = part.args_as_dict()
+
+            # Reject end_step if not first or duplicated
+            if reject_action_end and name == "end_step":
+                tool_results.append((
+                    part.tool_call_id,
+                    "end_step must appear exactly once and be the first "
+                    "tool call in a response. Do not call tools before it or "
+                    "call it multiple times.",
+                ))
+                continue
+
+            # Reject step tools that aren't currently exposed
+            if (
+                name in ALL_CONVERSATION_LOG_TOOLS
+                and name not in self._currently_exposed_step_tools()
+            ):
+                tool_results.append((
+                    part.tool_call_id,
+                    f"Unknown tool: {name}",
+                ))
+                continue
 
             # Protocol enforcement
             error = check_protocol(self.conversation_log.model, name)

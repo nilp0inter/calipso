@@ -40,17 +40,18 @@ async def test_simple_text_response():
 
 
 async def test_tool_call_then_text():
-    """Model calls a tool (with action log protocol), then responds with text."""
+    """Model calls a tool (with step protocol), then responds with text."""
     call_count = 0
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
+            # begin_step + tool in same response
             return ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name="action_log_start",
+                        tool_name="begin_step",
                         args={"description": "Set the goal"},
                         tool_call_id="call_0",
                     ),
@@ -59,8 +60,14 @@ async def test_tool_call_then_text():
                         args={"goal": "Test goal"},
                         tool_call_id="call_1",
                     ),
+                ]
+            )
+        if call_count == 2:
+            # end_step in a separate response (after seeing results)
+            return ModelResponse(
+                parts=[
                     ToolCallPart(
-                        tool_name="action_log_end",
+                        tool_name="end_step",
                         args={"result": "Goal set to Test goal"},
                         tool_call_id="call_2",
                     ),
@@ -82,7 +89,7 @@ async def test_tool_call_then_text():
 
 
 async def test_multiple_tool_calls_in_sequence():
-    """Model makes multiple tool calls across two actions."""
+    """Model makes multiple tool calls across two steps."""
     call_count = 0
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -92,7 +99,7 @@ async def test_multiple_tool_calls_in_sequence():
             return ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name="action_log_start",
+                        tool_name="begin_step",
                         args={"description": "Set goal step 1"},
                         tool_call_id="call_0",
                     ),
@@ -101,18 +108,19 @@ async def test_multiple_tool_calls_in_sequence():
                         args={"goal": "Step 1"},
                         tool_call_id="call_1",
                     ),
-                    ToolCallPart(
-                        tool_name="action_log_end",
-                        args={"result": "Goal set to Step 1"},
-                        tool_call_id="call_2",
-                    ),
                 ]
             )
         if call_count == 2:
+            # end_step first, then begin new step + tool
             return ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name="action_log_start",
+                        tool_name="end_step",
+                        args={"result": "Goal set to Step 1"},
+                        tool_call_id="call_2",
+                    ),
+                    ToolCallPart(
+                        tool_name="begin_step",
                         args={"description": "Set goal step 2"},
                         tool_call_id="call_3",
                     ),
@@ -121,8 +129,13 @@ async def test_multiple_tool_calls_in_sequence():
                         args={"goal": "Step 2"},
                         tool_call_id="call_4",
                     ),
+                ]
+            )
+        if call_count == 3:
+            return ModelResponse(
+                parts=[
                     ToolCallPart(
-                        tool_name="action_log_end",
+                        tool_name="end_step",
                         args={"result": "Goal set to Step 2"},
                         tool_call_id="call_5",
                     ),
@@ -141,4 +154,4 @@ async def test_multiple_tool_calls_in_sequence():
     result = await run_turn(model, ctx, "Do two things")
     assert result == "Done!"
     assert goal.model.text == "Step 2"
-    assert call_count == 3
+    assert call_count == 4

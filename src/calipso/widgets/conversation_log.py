@@ -1,9 +1,9 @@
-"""ConversationLog widget — manages conversation turns with action log protocol.
+"""ConversationLog widget — manages conversation turns with step protocol.
 
 Messages are partitioned into segments. Each segment has an optional
 model-provided summary: summarized segments render as their summary text,
 unsummarized segments render their full messages. This prevents replaying
-raw tool call/result messages for completed actions.
+raw tool call/result messages for completed steps.
 """
 
 import html as html_mod
@@ -33,7 +33,7 @@ class Segment:
     """A contiguous run of messages, optionally summarized.
 
     Mutable by design — messages are appended during a turn,
-    and summary is set when the action ends.
+    and summary is set when the step ends.
     """
 
     messages: list[ModelMessage] = field(default_factory=list)
@@ -67,9 +67,8 @@ class ConversationLogModel:
     """
 
     turns: list[Turn] = field(default_factory=list)
-    active_action: str | None = None
-    allowed_tool: str | None = None
-    action_tool_count: int = 0
+    active_step: str | None = None
+    step_tool_count: int = 0
 
 
 # --- Messages ---
@@ -93,12 +92,12 @@ class ToolResultsReceived:
 
 
 @dataclass(frozen=True)
-class ActionLogStart:
+class BeginStep:
     description: str
 
 
 @dataclass(frozen=True)
-class ActionLogEnd:
+class EndStep:
     result: str
 
 
@@ -111,21 +110,60 @@ ConversationLogMsg = (
     UserMessageReceived
     | ResponseReceived
     | ToolResultsReceived
-    | ActionLogStart
-    | ActionLogEnd
+    | BeginStep
+    | EndStep
     | ToolTracked
 )
 
 
 _RULES = (
-    "## Action Protocol\n"
-    "Every tool use must be wrapped in an action:\n"
-    "1. Call action_log_start with a description of what you will do.\n"
-    "2. Either call your tool(s) (one tool type per action, may repeat)"
-    " OR respond to the user with text.\n"
-    "3. Call action_log_end with a summary of what happened.\n"
-    "Calling tools outside an action will be rejected.\n"
-    "Empty actions (start then immediately end) will be rejected."
+    "## Step Protocol — conversation memory management\n"
+    "\n"
+    "Your conversation history is managed through **steps**. A step is a\n"
+    "logical unit of work (e.g. reading a file, setting a goal, running\n"
+    "a query). When you close a step with `end_step`, the full history\n"
+    "of that step is **replaced by your summary**. This keeps the\n"
+    "conversation compact — only your summary survives, so it must be\n"
+    "accurate and complete.\n"
+    "\n"
+    "### Lifecycle\n"
+    "1. Call `begin_step` — describe what you are about to do.\n"
+    "2. Call your tool(s) — mix freely, as many as needed.\n"
+    "3. Read the results. Once you have seen all results, call\n"
+    "   `end_step` with a summary of the actions you took and their\n"
+    "   outcomes. Describe what you DID, not the current state — the\n"
+    "   state panels already show that.\n"
+    "\n"
+    "### Rules\n"
+    "- Every tool call must be inside a step. Calls outside a step"
+    " are rejected.\n"
+    "- Only one step at a time. Call `end_step` before `begin_step`"
+    " again.\n"
+    "- `end_step` must be the **first** tool call in a response."
+    " You must not call any tool before it in the same response."
+    " You may call `begin_step` (and more tools) after it.\n"
+    "- `end_step` may appear at most once per response.\n"
+    "- Empty steps (begin then immediately end with no tool calls)"
+    " are rejected.\n"
+    "\n"
+    "### Why this matters\n"
+    "Your `end_step` summary **replaces** the full conversation for\n"
+    "that step. If you call `end_step` in the same response as your\n"
+    "tools, you have not seen the results yet — your summary will be\n"
+    "wrong, and you will lose information permanently.\n"
+    "\n"
+    "### Example\n"
+    "```\n"
+    "Response 1: begin_step({description: 'Read config and set goal'})\n"
+    "Response 1: open_file({path: 'config.yaml'})\n"
+    "            ← you receive tool results\n"
+    "Response 2: set_goal({goal: 'Deploy v2'})\n"
+    "            ← you receive tool results\n"
+    "Response 3: end_step({result: 'Read config.yaml, found deploy\n"
+    "             target is v2. Set goal to Deploy v2.'})\n"
+    "```\n"
+    "Note: `end_step` is in a **separate response** after seeing all\n"
+    "results. The summary captures what actually happened."
 )
 
 
@@ -148,31 +186,27 @@ def update(
             segment.messages.append(request)
             return model, none
 
-        case ActionLogStart(description=desc):
-            model.active_action = desc
-            model.allowed_tool = None
-            model.action_tool_count = 0
-            return model, tool_result(f"Action started: {desc}")
+        case BeginStep(description=desc):
+            model.active_step = desc
+            model.step_tool_count = 0
+            return model, tool_result(f"Step started: {desc}")
 
-        case ActionLogEnd(result=result):
+        case EndStep(result=result):
             summary = (
-                f"[Action: {model.active_action}] "
-                f"Called {model.action_tool_count} tool(s). "
+                f"[Step: {model.active_step}] "
+                f"Called {model.step_tool_count} tool(s). "
                 f"Result: {result}"
             )
             if model.turns:
                 current_segment(model).summary = summary
                 model.turns[-1].segments.append(Segment())
-            model.active_action = None
-            model.allowed_tool = None
-            model.action_tool_count = 0
-            return model, tool_result("Action logged.")
+            model.active_step = None
+            model.step_tool_count = 0
+            return model, tool_result("Step logged.")
 
-        case ToolTracked(tool_name=name):
-            if model.active_action is not None:
-                model.action_tool_count += 1
-                if model.allowed_tool is None:
-                    model.allowed_tool = name
+        case ToolTracked(tool_name=_):
+            if model.active_step is not None:
+                model.step_tool_count += 1
             return model, none
 
 
@@ -180,37 +214,34 @@ def update(
 
 
 def check_protocol(model: ConversationLogModel, tool_name: str) -> str | None:
-    """Check if a tool call is allowed under the action log protocol.
+    """Check if a tool call is allowed under the step protocol.
 
     Returns an error message if the call violates the protocol, or None
     if it's allowed.
     """
-    if tool_name == "action_log_start":
-        return None
-    if tool_name == "action_log_end":
-        if model.active_action is None:
+    if tool_name == "begin_step":
+        if model.active_step is not None:
             return (
-                "Cannot call action_log_end without an active action. "
-                "Call action_log_start first."
-            )
-        if model.action_tool_count == 0:
-            return (
-                "Cannot call action_log_end without doing anything. "
-                "Either call a tool or respond to the user first, "
-                "then end the action."
+                "Cannot call begin_step while a step is already "
+                "active. Call end_step first."
             )
         return None
-    if model.active_action is None:
-        return (
-            f"Cannot execute '{tool_name}' without an active action log entry. "
-            "Call action_log_start first."
-        )
-    if model.allowed_tool is None:
+    if tool_name == "end_step":
+        if model.active_step is None:
+            return (
+                "Cannot call end_step without an active step. "
+                "Call begin_step first."
+            )
+        if model.step_tool_count == 0:
+            return (
+                "Cannot call end_step without doing anything. "
+                "Call at least one tool first, then end the step."
+            )
         return None
-    if tool_name != model.allowed_tool:
+    if model.active_step is None:
         return (
-            f"Cannot execute '{tool_name}' during this action log entry. "
-            f"Only '{model.allowed_tool}' is allowed until you call action_log_end."
+            f"Cannot execute '{tool_name}' outside a step. "
+            "Call begin_step first."
         )
     return None
 
@@ -222,38 +253,55 @@ def current_segment(model: ConversationLogModel) -> Segment:
 
 # --- Views ---
 
-_TOOL_DEFS = [
-    ToolDefinition(
-        name="action_log_start",
-        description=(
-            "Start a new action log entry. Call this before executing any tool."
-        ),
-        parameters_json_schema={
-            "type": "object",
-            "properties": {
-                "description": {
-                    "type": "string",
-                    "description": ("What you are about to do, in imperative mood."),
-                },
-            },
-            "required": ["description"],
-        },
+_TOOL_START = ToolDefinition(
+    name="begin_step",
+    description=(
+        "Begin a new step. Call this before using any tool."
+        " Describe what you are about to do."
     ),
-    ToolDefinition(
-        name="action_log_end",
-        description="Finish the current action log entry.",
-        parameters_json_schema={
-            "type": "object",
-            "properties": {
-                "result": {
-                    "type": "string",
-                    "description": "A summary of what happened.",
-                },
+    parameters_json_schema={
+        "type": "object",
+        "properties": {
+            "description": {
+                "type": "string",
+                "description": "What you are about to do.",
             },
-            "required": ["result"],
         },
+        "required": ["description"],
+    },
+)
+
+_TOOL_END = ToolDefinition(
+    name="end_step",
+    description=(
+        "End the current step with a summary of what happened."
+        " Must be the first tool call in the response."
+        " The summary permanently replaces the step's history."
+        " Summarize the ACTIONS YOU TOOK and their results —"
+        " do not describe the current state of the system."
+        " The system state is already visible in the state"
+        " panels; the summary records what you DID."
     ),
-]
+    parameters_json_schema={
+        "type": "object",
+        "properties": {
+            "result": {
+                "type": "string",
+                "description": (
+                    "Summary of the actions you performed and their"
+                    " outcomes. Describe what you did, not what you"
+                    " see now. Example: 'Set the goal to Deploy v2'"
+                    " — not 'The goal is already Deploy v2'."
+                ),
+            },
+        },
+        "required": ["result"],
+    },
+)
+
+ALL_CONVERSATION_LOG_TOOLS: frozenset[str] = frozenset(
+    {_TOOL_START.name, _TOOL_END.name}
+)
 
 
 def view_messages(model: ConversationLogModel) -> Iterator[ModelMessage]:
@@ -263,11 +311,15 @@ def view_messages(model: ConversationLogModel) -> Iterator[ModelMessage]:
         yield ModelRequest(parts=[UserPromptPart(content=turn.user_message)])
         for segment in turn.segments:
             if segment.summary is not None:
-                yield ModelRequest(parts=[SystemPromptPart(content=segment.summary)])
+                yield ModelRequest(
+                    parts=[SystemPromptPart(content=segment.summary)]
+                )
                 for msg in segment.messages:
                     if isinstance(msg, ModelResponse):
                         tool_parts = [
-                            p for p in msg.parts if isinstance(p, ToolCallPart)
+                            p
+                            for p in msg.parts
+                            if isinstance(p, ToolCallPart)
                         ]
                         if tool_parts:
                             yield ModelResponse(
@@ -276,7 +328,9 @@ def view_messages(model: ConversationLogModel) -> Iterator[ModelMessage]:
                             )
                     elif isinstance(msg, ModelRequest):
                         tool_parts = [
-                            p for p in msg.parts if isinstance(p, ToolReturnPart)
+                            p
+                            for p in msg.parts
+                            if isinstance(p, ToolReturnPart)
                         ]
                         if tool_parts:
                             yield ModelRequest(parts=tool_parts)
@@ -285,7 +339,10 @@ def view_messages(model: ConversationLogModel) -> Iterator[ModelMessage]:
 
 
 def view_tools(model: ConversationLogModel) -> Iterator[ToolDefinition]:
-    yield from _TOOL_DEFS
+    if model.active_step is None:
+        yield _TOOL_START
+    elif model.step_tool_count > 0:
+        yield _TOOL_END
 
 
 def view_html(model: ConversationLogModel) -> str:
@@ -293,22 +350,45 @@ def view_html(model: ConversationLogModel) -> str:
         content = "<p><em>No messages yet</em></p>"
     else:
         parts = []
-        for turn in model.turns:
+        for i, turn in enumerate(model.turns):
+            if i > 0:
+                parts.append('<hr class="turn-sep">')
+            parts.append('<div class="turn">')
             user_html = render_md(turn.user_message)
             parts.append(
-                f'<div class="msg user"><strong>You:</strong> {user_html}</div>'
+                f'<div class="msg sent">'
+                f'<span class="dir">&#9650;</span> {user_html}'
+                f"</div>"
             )
             for segment in turn.segments:
                 if segment.summary is not None:
+                    tool_html = []
+                    for msg in segment.messages:
+                        tool_html.extend(_render_tool_parts(msg))
                     parts.append(
-                        f'<div class="msg summary">'
-                        f"{html_mod.escape(segment.summary)}</div>"
+                        f'<details class="tool-group">'
+                        f"<summary>"
+                        f"{html_mod.escape(segment.summary)}"
+                        f"</summary>"
+                        f"{''.join(tool_html)}"
+                        f"</details>"
                     )
-                    for msg in segment.messages:
-                        parts.extend(_render_tool_parts(msg))
                 else:
+                    text_parts = []
+                    tool_parts = []
                     for msg in segment.messages:
-                        parts.extend(_render_message(msg))
+                        t, tl = _split_message(msg)
+                        text_parts.extend(t)
+                        tool_parts.extend(tl)
+                    parts.extend(text_parts)
+                    if tool_parts:
+                        parts.append(
+                            '<details class="tool-group" open>'
+                            "<summary>Tool calls</summary>"
+                            f"{''.join(tool_parts)}"
+                            "</details>"
+                        )
+            parts.append("</div>")
         content = "".join(parts)
     return (
         f'<div id="widget-conversation-log" class="widget">'
@@ -324,48 +404,58 @@ def _render_tool_parts(msg: ModelMessage) -> list[str]:
             if isinstance(part, ToolCallPart):
                 args = html_mod.escape(str(part.args_as_dict()))
                 parts.append(
-                    f'<div class="msg tool-call">'
-                    f"<code>{html_mod.escape(part.tool_name)}({args})</code>"
-                    f"</div>"
+                    f'<div class="msg received tool-call">'
+                    f'<span class="dir">&#9660;</span> '
+                    f"<code>{html_mod.escape(part.tool_name)}"
+                    f"({args})</code></div>"
                 )
     elif isinstance(msg, ModelRequest):
         for part in msg.parts:
             if isinstance(part, ToolReturnPart):
                 parts.append(
-                    f'<div class="msg tool-result">'
-                    f"<code>→ {html_mod.escape(str(part.content))}</code>"
-                    f"</div>"
+                    f'<div class="msg sent tool-result">'
+                    f'<span class="dir">&#9650;</span> '
+                    f"<code>"
+                    f"{html_mod.escape(str(part.content))}"
+                    f"</code></div>"
                 )
     return parts
 
 
-def _render_message(msg: ModelMessage) -> list[str]:
-    parts: list[str] = []
+def _split_message(
+    msg: ModelMessage,
+) -> tuple[list[str], list[str]]:
+    """Split a message into (text_parts, tool_parts) HTML."""
+    text: list[str] = []
+    tools: list[str] = []
     if isinstance(msg, ModelResponse):
         for part in msg.parts:
             if isinstance(part, TextPart):
                 rendered = render_md(part.content)
-                parts.append(
-                    f'<div class="msg assistant">'
-                    f"<strong>Calipso:</strong> {rendered}"
-                    f"</div>"
+                text.append(
+                    f'<div class="msg received assistant">'
+                    f'<span class="dir">&#9660;</span> '
+                    f"{rendered}</div>"
                 )
             elif isinstance(part, ToolCallPart):
                 args = html_mod.escape(str(part.args_as_dict()))
-                parts.append(
-                    f'<div class="msg tool-call">'
-                    f"<code>{html_mod.escape(part.tool_name)}({args})</code>"
-                    f"</div>"
+                tools.append(
+                    f'<div class="msg received tool-call">'
+                    f'<span class="dir">&#9660;</span> '
+                    f"<code>{html_mod.escape(part.tool_name)}"
+                    f"({args})</code></div>"
                 )
     elif isinstance(msg, ModelRequest):
         for part in msg.parts:
             if isinstance(part, ToolReturnPart):
-                parts.append(
-                    f'<div class="msg tool-result">'
-                    f"<code>→ {html_mod.escape(str(part.content))}</code>"
-                    f"</div>"
+                tools.append(
+                    f'<div class="msg sent tool-result">'
+                    f'<span class="dir">&#9650;</span> '
+                    f"<code>"
+                    f"{html_mod.escape(str(part.content))}"
+                    f"</code></div>"
                 )
-    return parts
+    return text, tools
 
 
 # --- Anticorruption layers ---
@@ -375,10 +465,10 @@ def from_llm(
     model: ConversationLogModel, tool_name: str, args: dict
 ) -> ConversationLogMsg:
     match tool_name:
-        case "action_log_start":
-            return ActionLogStart(description=args["description"])
-        case "action_log_end":
-            return ActionLogEnd(result=args["result"])
+        case "begin_step":
+            return BeginStep(description=args["description"])
+        case "end_step":
+            return EndStep(result=args["result"])
     raise ValueError(f"ConversationLog: unknown tool '{tool_name}'")
 
 

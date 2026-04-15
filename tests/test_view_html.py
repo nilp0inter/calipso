@@ -121,7 +121,7 @@ class TestConversationLogHtml:
         cl.send(UserMessageReceived(text="Hello"))
         html = cl.view_html()
         assert "Hello" in html
-        assert "You:" in html
+        assert "msg sent" in html
 
 
 class TestAgentsMdHtml:

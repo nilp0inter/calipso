@@ -116,7 +116,7 @@ class TestContextDispatch:
         start_response = ModelResponse(
             parts=[
                 ToolCallPart(
-                    tool_name="action_log_start",
+                    tool_name="begin_step",
                     args={"description": "Set goal"},
                     tool_call_id="call_0",
                 )
@@ -150,7 +150,7 @@ class TestContextDispatch:
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name="action_log_start",
+                        tool_name="begin_step",
                         args={"description": "test"},
                         tool_call_id="call_0",
                     )
@@ -169,7 +169,7 @@ class TestContextDispatch:
         results, _ = await ctx.handle_response(response)
         assert "Unknown" in results[0][1]
 
-    async def test_action_log_protocol_enforcement(self):
+    async def test_step_protocol_enforcement(self):
         task_list = create_task_list()
         ctx = Context(
             system_prompt=create_system_prompt(),
@@ -177,7 +177,7 @@ class TestContextDispatch:
             conversation_log=create_conversation_log(),
         )
         ctx.add_user_message("test")
-        # Try calling create_task without action_log_start
+        # Try calling create_task without begin_step
         response = ModelResponse(
             parts=[
                 ToolCallPart(
@@ -188,7 +188,7 @@ class TestContextDispatch:
             ]
         )
         results, _ = await ctx.handle_response(response)
-        assert "action_log_start" in results[0][1]
+        assert "begin_step" in results[0][1]
         # Task should NOT have been created
         assert len(task_list.model.tasks) == 0
 
@@ -205,7 +205,7 @@ class TestContextDispatch:
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name="action_log_start",
+                        tool_name="begin_step",
                         args={"description": "create task"},
                         tool_call_id="c0",
                     )
@@ -235,9 +235,9 @@ class TestContextDispatch:
             children=[],
             conversation_log=create_conversation_log(),
         )
-        # action_log_start is NOT in frontend_tools
+        # begin_step is NOT in frontend_tools
         result = await ctx.handle_widget_event(
-            "action_log_start", {"description": "Hacked"}
+            "begin_step", {"description": "Hacked"}
         )
         assert result is None
 
@@ -262,3 +262,246 @@ class TestContextDispatch:
         assert results == []  # no tool calls
         assert len(ctx.conversation_log.model.turns) == 1
         assert len(ctx.conversation_log.model.turns[0].segments[0].messages) == 1
+
+    async def test_end_step_rejected_when_not_first_tool_call(self):
+        goal = create_goal()
+        ctx = Context(
+            system_prompt=create_system_prompt(),
+            children=[goal],
+            conversation_log=create_conversation_log(),
+        )
+        ctx.add_user_message("test")
+        # Start action and call a tool
+        await ctx.handle_response(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="begin_step",
+                        args={"description": "do stuff"},
+                        tool_call_id="c0",
+                    )
+                ]
+            )
+        )
+        await ctx.handle_response(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="set_goal",
+                        args={"goal": "Win"},
+                        tool_call_id="c1",
+                    )
+                ]
+            )
+        )
+        # Now send set_goal BEFORE end_step in same response
+        results, _ = await ctx.handle_response(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="set_goal",
+                        args={"goal": "Lose"},
+                        tool_call_id="c2",
+                    ),
+                    ToolCallPart(
+                        tool_name="end_step",
+                        args={"result": "hallucinated summary"},
+                        tool_call_id="c3",
+                    ),
+                ]
+            )
+        )
+        # end_step should be rejected
+        end_result = next(r for r in results if r[0] == "c3")
+        assert "first tool call" in end_result[1]
+        # Action should still be active
+        assert ctx.conversation_log.model.active_step is not None
+
+    async def test_end_step_rejected_when_duplicated(self):
+        goal = create_goal()
+        ctx = Context(
+            system_prompt=create_system_prompt(),
+            children=[goal],
+            conversation_log=create_conversation_log(),
+        )
+        ctx.add_user_message("test")
+        # Start action and call a tool
+        await ctx.handle_response(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="begin_step",
+                        args={"description": "do stuff"},
+                        tool_call_id="c0",
+                    )
+                ]
+            )
+        )
+        await ctx.handle_response(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="set_goal",
+                        args={"goal": "Win"},
+                        tool_call_id="c1",
+                    )
+                ]
+            )
+        )
+        # Two end_step calls in same response
+        results, _ = await ctx.handle_response(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="end_step",
+                        args={"result": "first end"},
+                        tool_call_id="c2",
+                    ),
+                    ToolCallPart(
+                        tool_name="end_step",
+                        args={"result": "second end"},
+                        tool_call_id="c3",
+                    ),
+                ]
+            )
+        )
+        # Both should be rejected
+        assert all("first tool call" in r[1] for r in results)
+        assert ctx.conversation_log.model.active_step is not None
+
+    async def test_end_step_first_followed_by_new_action_succeeds(self):
+        goal = create_goal()
+        ctx = Context(
+            system_prompt=create_system_prompt(),
+            children=[goal],
+            conversation_log=create_conversation_log(),
+        )
+        ctx.add_user_message("test")
+        # Start action and call a tool
+        await ctx.handle_response(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="begin_step",
+                        args={"description": "first action"},
+                        tool_call_id="c0",
+                    )
+                ]
+            )
+        )
+        await ctx.handle_response(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="set_goal",
+                        args={"goal": "Win"},
+                        tool_call_id="c1",
+                    )
+                ]
+            )
+        )
+        # end_step first, then begin_step — should both succeed
+        results, _ = await ctx.handle_response(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="end_step",
+                        args={"result": "set the goal"},
+                        tool_call_id="c2",
+                    ),
+                    ToolCallPart(
+                        tool_name="begin_step",
+                        args={"description": "second action"},
+                        tool_call_id="c3",
+                    ),
+                ]
+            )
+        )
+        end_result = next(r for r in results if r[0] == "c2")
+        start_result = next(r for r in results if r[0] == "c3")
+        assert "Step logged" in end_result[1]
+        assert "Step started" in start_result[1]
+        # New action should be active
+        assert ctx.conversation_log.model.active_step == "second action"
+
+    async def test_begin_step_rejected_when_action_already_active(self):
+        goal = create_goal()
+        ctx = Context(
+            system_prompt=create_system_prompt(),
+            children=[goal],
+            conversation_log=create_conversation_log(),
+        )
+        ctx.add_user_message("test")
+        # Start an action
+        await ctx.handle_response(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="begin_step",
+                        args={"description": "first"},
+                        tool_call_id="c0",
+                    )
+                ]
+            )
+        )
+        # Try to start another without ending
+        results, _ = await ctx.handle_response(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="begin_step",
+                        args={"description": "second"},
+                        tool_call_id="c1",
+                    )
+                ]
+            )
+        )
+        # begin_step is not exposed during an active step → Unknown tool
+        assert "Unknown tool" in results[0][1]
+        assert ctx.conversation_log.model.active_step == "first"
+
+    async def test_end_step_alone_succeeds(self):
+        goal = create_goal()
+        ctx = Context(
+            system_prompt=create_system_prompt(),
+            children=[goal],
+            conversation_log=create_conversation_log(),
+        )
+        ctx.add_user_message("test")
+        # Start action and call a tool
+        await ctx.handle_response(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="begin_step",
+                        args={"description": "do stuff"},
+                        tool_call_id="c0",
+                    )
+                ]
+            )
+        )
+        await ctx.handle_response(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="set_goal",
+                        args={"goal": "Win"},
+                        tool_call_id="c1",
+                    )
+                ]
+            )
+        )
+        # end_step alone
+        results, _ = await ctx.handle_response(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="end_step",
+                        args={"result": "set the goal to Win"},
+                        tool_call_id="c2",
+                    ),
+                ]
+            )
+        )
+        assert "Step logged" in results[0][1]
+        assert ctx.conversation_log.model.active_step is None

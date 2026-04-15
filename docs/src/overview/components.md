@@ -30,7 +30,7 @@ The agentic loop. Takes a `Model` and a `Context`, then:
 
 An aiohttp HTTP + WebSocket server that provides a live browser dashboard. Serves the SPA at `/` and accepts WebSocket connections at `/ws`. On connection, sends all widget HTML. After every state mutation, pushes only changed widget fragments via htmx out-of-band swaps. Also handles turn lifecycle signals (thinking indicator, input disabling).
 
-The server handles two types of inbound WebSocket messages: `user_input` (enqueued for the runner's main loop) and `widget_event` (dispatched synchronously to the target widget's `dispatch_ui()` method via `Context.handle_widget_event()`, bypassing the LLM and action log protocol). After a widget event, changed HTML is pushed immediately.
+The server handles two types of inbound WebSocket messages: `user_input` (enqueued for the runner's main loop) and `widget_event` (dispatched synchronously to the target widget's `dispatch_ui()` method via `Context.handle_widget_event()`, bypassing the LLM and step protocol). After a widget event, changed HTML is pushed immediately.
 
 ## CLI
 
@@ -86,7 +86,7 @@ I/O resources (e.g., CodeExplorer's tree-sitter parser and summarizer agent) are
 | **AgentsMd** | `agents_md.py` | `AgentsMdModel(loaded_path, content, error)` | `ReloadRequested† \| AgentsReloaded†` | `reload_agents_md`\* | Behavioral instructions from `AGENTS.md`/`CLAUDE.md` |
 | **Goal** | `goal.py` | `GoalModel(text)` | `SetGoal† \| ClearGoal†` | `set_goal`\*, `clear_goal`\* | Goal panel with inline edit input and clear button |
 | **TaskList** | `task_list.py` | `TaskListModel(tasks, next_id)` | `CreateTask \| UpdateTaskStatus† \| RemoveTask†` | `create_task`, `update_task_status`\*, `remove_task`\* | Checklist with interactive checkboxes and remove buttons |
-| **ConversationLog** | `conversation_log.py` | `ConversationLogModel(turns, active_action, ...)` | `UserMessageReceived \| ResponseReceived \| ToolResultsReceived \| ActionLogStart \| ActionLogEnd \| ToolTracked` | `action_log_start`, `action_log_end` | Action protocol rules + conversation history; summarized segments render summary + tool parts |
+| **ConversationLog** | `conversation_log.py` | `ConversationLogModel(turns, active_step, ...)` | `UserMessageReceived \| ResponseReceived \| ToolResultsReceived \| BeginStep \| EndStep \| ToolTracked` | `begin_step`, `end_step` | Step protocol rules + conversation history; summarized segments render summary + tool parts |
 | **CodeExplorer** | `code_explorer.py` | `CodeExplorerModel(open_files, query_results)` | `OpenFileRequested \| FileOpened \| FileOpenError \| FileClosed† \| QueryRequested \| QueryAllRequested \| QueryCompleted \| QueryError` | `open_file`, `close_file`\*, `query`, `query_all` | Open files + tree-sitter query results (signatures + `[...REDACTED...]` body summaries) |
 | **FileExplorer** | `file_explorer.py` | `FileExplorerModel(listing_*, open_files)` | `ListDirectoryRequested \| DirectoryListed \| DirectoryListError \| ReadFileRequested \| FileRead \| FileReadError \| CloseReadFile†` | `list_directory`\*, `read_file`\*, `close_read_file`\* | Directory listing + multiple open files with interactive browsing (root button, double-click navigation); rejects `.py` files |
 | **Context** | `context.py` | N/A (compositor) | N/A | None | Composes: system prompt → conversation log → state panels (wrapped in `CURRENT STATE` markers), dispatches via `dispatch_llm()`/`dispatch_ui()`, detects changes via `changed_html()` |

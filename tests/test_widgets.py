@@ -212,7 +212,7 @@ class TestConversationLog:
         msgs = list(w.view_messages())
         # Should have the rules as a system prompt
         assert len(msgs) == 1
-        assert "Action Protocol" in msgs[0].parts[0].content
+        assert "Step Protocol" in msgs[0].parts[0].content
 
     def test_add_user_message_creates_turn(self):
         w = create_conversation_log()
@@ -248,14 +248,14 @@ class TestConversationLog:
         msgs = list(w.view_messages())
         assert response in msgs
 
-    async def test_action_start_records_active_action(self):
+    async def test_action_start_records_active_step(self):
         w = create_conversation_log()
         w.send(UserMessageReceived(text="Do something"))
         assert len(w.model.turns[0].segments) == 1
-        await w.dispatch_llm("action_log_start", {"description": "Do the thing"})
-        # action_log_start does NOT create a new segment
+        await w.dispatch_llm("begin_step", {"description": "Do the thing"})
+        # begin_step does NOT create a new segment
         assert len(w.model.turns[0].segments) == 1
-        assert w.model.active_action == "Do the thing"
+        assert w.model.active_step == "Do the thing"
 
     async def test_action_end_summarizes_and_creates_new_segment(self):
         from calipso.widgets.conversation_log import (
@@ -265,7 +265,7 @@ class TestConversationLog:
 
         w = create_conversation_log()
         w.send(UserMessageReceived(text="Do something"))
-        await w.dispatch_llm("action_log_start", {"description": "Do the thing"})
+        await w.dispatch_llm("begin_step", {"description": "Do the thing"})
         # Simulate some messages in the action segment
         seg = current_segment(w.model)
         w.send(
@@ -275,13 +275,13 @@ class TestConversationLog:
             )
         )
         await w.dispatch_llm(
-            "action_log_end", {"result": "Thing was done successfully"}
+            "end_step", {"result": "Thing was done successfully"}
         )
         # The current segment (Seg0) should be summarized
         assert "Thing was done successfully" in w.model.turns[0].segments[0].summary
         # A new segment should exist for subsequent messages
         assert len(w.model.turns[0].segments) == 2
-        assert w.model.active_action is None
+        assert w.model.active_step is None
 
     async def test_summarized_segment_renders_summary_and_tool_calls(self):
         from calipso.widgets.conversation_log import (
@@ -292,7 +292,7 @@ class TestConversationLog:
 
         w = create_conversation_log()
         w.send(UserMessageReceived(text="Do something"))
-        await w.dispatch_llm("action_log_start", {"description": "Do the thing"})
+        await w.dispatch_llm("begin_step", {"description": "Do the thing"})
         seg = current_segment(w.model)
         # Response with both text and a tool call
         tool_call = ToolCallPart(
@@ -311,7 +311,7 @@ class TestConversationLog:
         w.send(
             ToolResultsReceived(request=ModelRequest(parts=[tool_return]), segment=seg)
         )
-        await w.dispatch_llm("action_log_end", {"result": "Done!"})
+        await w.dispatch_llm("end_step", {"result": "Done!"})
 
         msgs = list(w.view_messages())
         # The summary should appear as a system prompt
@@ -354,67 +354,94 @@ class TestConversationLog:
 
         w = create_conversation_log()
         w.send(UserMessageReceived(text="Do something"))
-        await w.dispatch_llm("action_log_start", {"description": "Do the thing"})
+        await w.dispatch_llm("begin_step", {"description": "Do the thing"})
         seg = current_segment(w.model)
         text_response = ModelResponse(parts=[TextPart(content="thinking...")])
         w.send(ResponseReceived(response=text_response, segment=seg))
-        await w.dispatch_llm("action_log_end", {"result": "Done!"})
+        await w.dispatch_llm("end_step", {"result": "Done!"})
 
         msgs = list(w.view_messages())
         # No ModelResponse should appear (text-only response is dropped)
         assert not any(isinstance(m, ModelResponse) for m in msgs)
 
-    def test_view_tools(self):
+    def test_view_tools_initial_state(self):
         w = create_conversation_log()
         tools = list(w.view_tools())
         names = {t.name for t in tools}
-        assert names == {"action_log_start", "action_log_end"}
+        # No action active → only start is offered
+        assert names == {"begin_step"}
+
+    def test_view_tools_after_action_start(self):
+        from calipso.widgets.conversation_log import (
+            ConversationLogModel,
+            view_tools,
+        )
+
+        # Action started, no tools called yet
+        model = ConversationLogModel(
+            turns=[], active_step="do stuff", step_tool_count=0
+        )
+        tools = list(view_tools(model))
+        # Action active but no tools called → neither offered
+        assert tools == []
+
+    def test_view_tools_after_tool_called(self):
+        from calipso.widgets.conversation_log import (
+            ConversationLogModel,
+            view_tools,
+        )
+
+        model = ConversationLogModel(
+            turns=[], active_step="do stuff", step_tool_count=1
+        )
+        tools = list(view_tools(model))
+        names = {t.name for t in tools}
+        # Action active + tools called → only end is offered
+        assert names == {"end_step"}
 
 
 class TestConversationLogProtocol:
     def test_check_protocol_allows_start(self):
         w = create_conversation_log()
-        assert check_protocol(w.model, "action_log_start") is None
+        assert check_protocol(w.model, "begin_step") is None
 
-    def test_check_protocol_no_active_action(self):
+    def test_check_protocol_no_active_step(self):
         w = create_conversation_log()
         error = check_protocol(w.model, "some_tool")
         assert error is not None
-        assert "action_log_start" in error
+        assert "begin_step" in error
 
     def test_check_protocol_end_without_start(self):
         w = create_conversation_log()
-        error = check_protocol(w.model, "action_log_end")
+        error = check_protocol(w.model, "end_step")
         assert error is not None
 
-    async def test_check_protocol_tool_type_lock(self):
+    async def test_check_protocol_allows_mixed_tools(self):
         w = create_conversation_log()
         w.send(UserMessageReceived(text="test"))
-        await w.dispatch_llm("action_log_start", {"description": "Do stuff"})
+        await w.dispatch_llm("begin_step", {"description": "Do stuff"})
         w.send(ToolTracked(tool_name="tool_a"))
         assert check_protocol(w.model, "tool_a") is None
-        error = check_protocol(w.model, "tool_b")
-        assert error is not None
-        assert "tool_a" in error
+        assert check_protocol(w.model, "tool_b") is None
 
     async def test_protocol_rejects_empty_action(self):
         w = create_conversation_log()
         w.send(UserMessageReceived(text="test"))
-        await w.dispatch_llm("action_log_start", {"description": "Read file"})
-        assert w.model.active_action == "Read file"
-        error = check_protocol(w.model, "action_log_end")
+        await w.dispatch_llm("begin_step", {"description": "Read file"})
+        assert w.model.active_step == "Read file"
+        error = check_protocol(w.model, "end_step")
         assert error is not None
         assert "without doing anything" in error
 
     async def test_protocol_start_tool_then_end(self):
         w = create_conversation_log()
         w.send(UserMessageReceived(text="test"))
-        await w.dispatch_llm("action_log_start", {"description": "Read file"})
+        await w.dispatch_llm("begin_step", {"description": "Read file"})
         w.send(ToolTracked(tool_name="read_file"))
-        assert check_protocol(w.model, "action_log_end") is None
-        result = await w.dispatch_llm("action_log_end", {"result": "File read OK"})
+        assert check_protocol(w.model, "end_step") is None
+        result = await w.dispatch_llm("end_step", {"result": "File read OK"})
         assert "logged" in result.lower()
-        assert w.model.active_action is None
+        assert w.model.active_step is None
 
 
 # --- FileExplorer ---

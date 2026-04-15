@@ -1,6 +1,6 @@
 """Context widget — root composition of all widgets into the model's context."""
 
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 
 from pydantic_ai.messages import (
@@ -114,7 +114,9 @@ class Context:
         self.conversation_log.send(UserMessageReceived(text=text))
 
     async def handle_response(
-        self, response: ModelResponse
+        self,
+        response: ModelResponse,
+        on_update: Callable[[], Awaitable[None]] | None = None,
     ) -> tuple[list[tuple[str, str]], Segment]:
         """Process a model response, dispatch tool calls, return tool results.
 
@@ -178,7 +180,7 @@ class Context:
                 tool_results.append((part.tool_call_id, f"Unknown tool: {name}"))
                 continue
 
-            result = await owner.dispatch_llm(name, args)
+            result = await owner.dispatch_llm(name, args, on_update=on_update)
             tool_results.append((part.tool_call_id, result))
 
             # Track non-action-log tools for protocol enforcement
@@ -190,7 +192,12 @@ class Context:
 
         return tool_results, segment
 
-    async def handle_widget_event(self, tool_name: str, args: dict) -> str | None:
+    async def handle_widget_event(
+        self,
+        tool_name: str,
+        args: dict,
+        on_update: Callable[[], Awaitable[None]] | None = None,
+    ) -> str | None:
         """Handle a frontend-initiated widget event.
 
         Bypasses the action log protocol. Returns the update result,
@@ -199,4 +206,4 @@ class Context:
         owner = self._tool_owners.get(tool_name)
         if owner is None:
             return None
-        return await owner.dispatch_ui(tool_name, args)
+        return await owner.dispatch_ui(tool_name, args, on_update=on_update)

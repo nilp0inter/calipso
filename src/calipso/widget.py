@@ -14,7 +14,7 @@ View functions return Iterator[T] — composition uses ``yield from``
 which naturally flattens nested iterators (List monad join).
 """
 
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -125,22 +125,36 @@ class WidgetHandle:
 
     # -- Dispatch methods ---------------------------------------------------
 
-    async def dispatch_llm(self, tool_name: str, args: dict) -> str:
+    async def dispatch_llm(
+        self,
+        tool_name: str,
+        args: dict,
+        on_update: Callable[[], Awaitable[None]] | None = None,
+    ) -> str:
         """Dispatch an LLM tool call: from_llm -> update -> Cmd loop.
 
         ValueError raised by from_llm is caught and returned as the
         tool result string (validation errors at the boundary).
         The Cmd loop executes effects and feeds results back into
         update until a CmdRespond is reached.
+
+        ``on_update`` is called after each model mutation (before the
+        next effect executes), mirroring Elm's render-between-updates.
         """
         try:
             msg = self._from_llm_fn(self._model, tool_name, args)
         except ValueError as e:
             return str(e)
         self._model, cmd = self._update_fn(self._model, msg)
-        return await self._execute_cmd(cmd)
+        if on_update is not None:
+            await on_update()
+        return await self._execute_cmd(cmd, on_update)
 
-    async def _execute_cmd(self, cmd: Cmd) -> str:
+    async def _execute_cmd(
+        self,
+        cmd: Cmd,
+        on_update: Callable[[], Awaitable[None]] | None = None,
+    ) -> str:
         """Execute the Cmd loop.
 
         CmdNone — no response (returns empty string).
@@ -156,12 +170,22 @@ class WidgetHandle:
                 data = await perform()
                 msg = to_msg(data)
                 self._model, next_cmd = self._update_fn(self._model, msg)
-                return await self._execute_cmd(next_cmd)
+                if on_update is not None:
+                    await on_update()
+                return await self._execute_cmd(next_cmd, on_update)
 
-    async def dispatch_ui(self, tool_name: str, args: dict) -> str | None:
+    async def dispatch_ui(
+        self,
+        tool_name: str,
+        args: dict,
+        on_update: Callable[[], Awaitable[None]] | None = None,
+    ) -> str | None:
         """Dispatch a browser event: from_ui -> update -> Cmd loop.
 
         Returns None if the tool is not frontend-callable or not recognized.
+
+        ``on_update`` is called after each model mutation (before the
+        next effect executes), mirroring Elm's render-between-updates.
         """
         if tool_name not in self._frontend_tool_names:
             return None
@@ -169,7 +193,9 @@ class WidgetHandle:
         if msg is None:
             return None
         self._model, cmd = self._update_fn(self._model, msg)
-        return await self._execute_cmd(cmd)
+        if on_update is not None:
+            await on_update()
+        return await self._execute_cmd(cmd, on_update)
 
     def send(self, msg: Any) -> None:
         """Send a Msg directly, bypassing anticorruption layers.

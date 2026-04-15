@@ -18,6 +18,7 @@ from calipso.widgets import (
     create_goal,
     create_system_prompt,
     create_task_list,
+    create_test_suite,
 )
 
 PROMPT_DIR = Path("prompts")
@@ -84,6 +85,7 @@ async def async_main():
             create_task_list(),
             create_code_explorer(),
             create_file_explorer(),
+            create_test_suite(),
         ],
         conversation_log=create_conversation_log(),
     )

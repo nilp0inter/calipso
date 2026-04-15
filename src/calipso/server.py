@@ -53,6 +53,7 @@ class DashboardServer:
                         await self.context.handle_widget_event(
                             event["tool_name"],
                             event.get("args", {}),
+                            on_update=self.push_updates,
                         )
                         await self.push_updates()
                     else:

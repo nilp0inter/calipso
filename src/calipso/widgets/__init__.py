@@ -7,6 +7,7 @@ from calipso.widgets.file_explorer import create_file_explorer
 from calipso.widgets.goal import create_goal
 from calipso.widgets.system_prompt import create_system_prompt
 from calipso.widgets.task_list import create_task_list
+from calipso.widgets.test_suite import create_test_suite
 
 __all__ = [
     "Context",
@@ -18,4 +19,5 @@ __all__ = [
     "create_goal",
     "create_system_prompt",
     "create_task_list",
+    "create_test_suite",
 ]

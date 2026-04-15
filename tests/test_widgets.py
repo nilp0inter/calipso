@@ -25,6 +25,7 @@ from calipso.widgets.file_explorer import create_file_explorer
 from calipso.widgets.goal import create_goal
 from calipso.widgets.system_prompt import create_system_prompt
 from calipso.widgets.task_list import TaskStatus, create_task_list
+from calipso.widgets.test_suite import create_test_suite
 
 models.ALLOW_MODEL_REQUESTS = False
 pytestmark = pytest.mark.anyio
@@ -552,3 +553,116 @@ class TestFileExplorer:
         assert w.frontend_tools() == frozenset(
             {"list_directory", "read_file", "close_read_file"}
         )
+
+
+# --- TestSuite ---
+
+
+class TestTestSuite:
+    async def test_configure(self):
+        w = create_test_suite()
+        result = await w.dispatch_llm(
+            "configure_test_runner",
+            {"command": "pytest -v", "env_vars": {"CI": "1"}, "timeout": 60},
+        )
+        assert "configured" in result.lower()
+        assert w.model.command == "pytest -v"
+        assert w.model.env_vars == (("CI", "1"),)
+        assert w.model.timeout == 60
+
+    async def test_run_without_config(self):
+        w = create_test_suite()
+        result = await w.dispatch_llm("run_tests", {})
+        assert "No test command" in result
+
+    async def test_run_tests_pass(self):
+        w = create_test_suite()
+        await w.dispatch_llm(
+            "configure_test_runner",
+            {"command": "echo ok", "env_vars": {}, "timeout": 10},
+        )
+        result = await w.dispatch_llm("run_tests", {})
+        assert "passed" in result.lower()
+        assert w.model.status == "passed"
+        assert "ok" in w.model.stdout
+
+    async def test_run_tests_fail(self):
+        w = create_test_suite()
+        await w.dispatch_llm(
+            "configure_test_runner",
+            {"command": "exit 1", "env_vars": {}, "timeout": 10},
+        )
+        result = await w.dispatch_llm("run_tests", {})
+        assert "failed" in result.lower()
+        assert w.model.status == "failed"
+
+    async def test_run_tests_timeout(self):
+        w = create_test_suite()
+        await w.dispatch_llm(
+            "configure_test_runner",
+            {"command": "sleep 60", "env_vars": {}, "timeout": 1},
+        )
+        result = await w.dispatch_llm("run_tests", {})
+        assert "timed out" in result.lower()
+        assert w.model.status == "timeout"
+
+    async def test_reject_concurrent_run(self):
+        import asyncio
+
+        w = create_test_suite()
+        await w.dispatch_llm(
+            "configure_test_runner",
+            {"command": "sleep 60", "env_vars": {}, "timeout": 120},
+        )
+        run_task = asyncio.create_task(w.dispatch_llm("run_tests", {}))
+        await asyncio.sleep(0.2)
+        result = await w.dispatch_llm("run_tests", {})
+        assert "already running" in result.lower()
+        # Clean up: cancel the long-running task
+        await w.dispatch_ui("cancel_tests", {})
+        await run_task
+
+    async def test_cancel_running(self):
+        import asyncio
+
+        w = create_test_suite()
+        await w.dispatch_llm(
+            "configure_test_runner",
+            {"command": "sleep 60", "env_vars": {}, "timeout": 120},
+        )
+        run_task = asyncio.create_task(w.dispatch_llm("run_tests", {}))
+        await asyncio.sleep(0.2)
+        await w.dispatch_ui("cancel_tests", {})
+        await run_task
+        assert w.model.status == "cancelled"
+
+    async def test_cancel_when_not_running(self):
+        w = create_test_suite()
+        result = await w.dispatch_llm("cancel_tests", {})
+        assert "No tests" in result or "not" in result.lower()
+
+    def test_view_tools(self):
+        w = create_test_suite()
+        tools = list(w.view_tools())
+        names = {t.name for t in tools}
+        assert names == {"configure_test_runner", "run_tests", "cancel_tests"}
+
+    def test_frontend_tools(self):
+        w = create_test_suite()
+        assert w.frontend_tools() == frozenset(
+            {"configure_test_runner", "run_tests", "cancel_tests"}
+        )
+
+    def test_view_html_contains_widget_id(self):
+        w = create_test_suite()
+        html = w.view_html()
+        assert "widget-test-suite" in html
+
+    def test_view_messages_unconfigured(self):
+        w = create_test_suite()
+        msgs = list(w.view_messages())
+        assert "No test runner configured" in msgs[0].parts[0].content
+
+    def test_stale_defaults_false(self):
+        w = create_test_suite()
+        assert w.model.stale is False

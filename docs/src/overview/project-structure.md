@@ -18,6 +18,7 @@ calipso/
 │       ├── task_list.py      # TaskList widget
 │       ├── code_explorer.py  # Tree-sitter code reading + summarization
 │       ├── file_explorer.py  # Filesystem navigation + non-Python file reading
+│       ├── test_suite.py     # Test runner configuration + execution
 │       ├── conversation_log.py # Conversation + step protocol
 │       └── context.py        # Root context widget (composes all)
 ├── tests/                    # Test suite (pytest + anyio)

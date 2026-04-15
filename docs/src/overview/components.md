@@ -66,7 +66,7 @@ Following the Elm architecture, `update` never performs I/O. Instead it returns 
 - **`CmdToolResult(text)`** — no effect; respond to the LLM tool call with text. Only meaningful when the initiator is the LLM.
 - **`CmdEffect(perform, to_msg)`** — an async thunk (`perform`) the runtime awaits, then converts the result into a Msg via `to_msg`, feeds it back into `update`, and recurses until a non-effect Cmd is reached.
 
-The Cmd loop runs in `dispatch_llm` and `dispatch_ui`: `from_llm/from_ui → Msg → update → Cmd → (execute effect → Msg → update → Cmd →)* → done`.
+The Cmd loop runs in `dispatch_llm` and `dispatch_ui`: `from_llm/from_ui → Msg → update → (on_update →) Cmd → (execute effect → Msg → update → (on_update →) Cmd →)* → done`. The optional `on_update` callback fires after each model mutation, allowing observers (e.g., the dashboard) to push HTML diffs between update cycles.
 
 ### Initiator — LLM vs UI
 
@@ -74,7 +74,7 @@ Messages that can originate from both the LLM and the browser carry an `initiato
 
 ### WidgetHandle
 
-Widgets are created via factory functions that return a `WidgetHandle` (`src/calipso/widget.py`) — the uniform interface holding a model reference + function table. The handle exposes: `view_messages()`, `view_tools()`, `view_html()`, `widget_id()`, `frontend_tools()`, `dispatch_llm()` (from_llm → update → Cmd loop), `dispatch_ui()` (from_ui → update → Cmd loop), `send(msg)` (direct Msg dispatch bypassing anticorruption layers, must produce `CmdNone`), and `.model` (read access to current state). Views compose via `yield from`. HTML is rendered via `render_md()` (markdown to safe HTML).
+Widgets are created via factory functions that return a `WidgetHandle` (`src/calipso/widget.py`) — the uniform interface holding a model reference + function table. The handle exposes: `view_messages()`, `view_tools()`, `view_html()`, `widget_id()`, `frontend_tools()`, `dispatch_llm(on_update=)` (from_llm → update → Cmd loop), `dispatch_ui(on_update=)` (from_ui → update → Cmd loop), `send(msg)` (direct Msg dispatch bypassing anticorruption layers, must produce `CmdNone`), and `.model` (read access to current state). Both dispatch methods accept an optional `on_update` async callback that fires after each model mutation — before the next effect executes — mirroring Elm's render-between-updates semantics. The dashboard server passes `push_updates` as this callback so the browser sees intermediate states (e.g., "running" before a subprocess completes). Views compose via `yield from`. HTML is rendered via `render_md()` (markdown to safe HTML).
 
 I/O resources (e.g., CodeExplorer's tree-sitter parser and summarizer agent) are captured in `update` closures by the factory, not stored in the model. These closures construct `CmdEffect` thunks that reference the resources but don't execute them — the runtime does. The ConversationLog is a regular `WidgetHandle` — Context interacts with it via `send()` for direct Msgs and pure query functions (`check_protocol()`, `current_segment()`) imported from the module.
 
@@ -89,14 +89,9 @@ I/O resources (e.g., CodeExplorer's tree-sitter parser and summarizer agent) are
 | **ConversationLog** | `conversation_log.py` | `ConversationLogModel(turns, active_step, ...)` | `UserMessageReceived \| ResponseReceived \| ToolResultsReceived \| BeginStep \| EndStep \| ToolTracked` | `begin_step`, `end_step` | Step protocol rules + conversation history; summarized segments render summary + tool parts |
 | **CodeExplorer** | `code_explorer.py` | `CodeExplorerModel(open_files, query_results)` | `OpenFileRequested \| FileOpened \| FileOpenError \| FileClosed† \| QueryRequested \| QueryAllRequested \| QueryCompleted \| QueryError` | `open_file`, `close_file`\*, `query`, `query_all` | Open files + tree-sitter query results (signatures + `[...REDACTED...]` body summaries) |
 | **FileExplorer** | `file_explorer.py` | `FileExplorerModel(listing_*, open_files)` | `ListDirectoryRequested \| DirectoryListed \| DirectoryListError \| ReadFileRequested \| FileRead \| FileReadError \| CloseReadFile†` | `list_directory`\*, `read_file`\*, `close_read_file`\* | Directory listing + multiple open files with interactive browsing (root button, double-click navigation); rejects `.py` files |
+| **TestSuite** | `test_suite.py` | `TestSuiteModel(command, env_vars, timeout, status, stdout, stderr, stale)` | `ConfigureTestRunner† \| RunTestsRequested† \| CancelTestsRequested† \| TestsCompleted \| TestsCancelled \| TestsTimedOut \| TestsError` | `configure_test_runner`\*, `run_tests`\*, `cancel_tests`\* | Config form (command, env vars, timeout) + status badge (idle/running/passed/failed/cancelled/timeout/error) + stdout/stderr output; uses closure-captured `proc_ref` for subprocess tracking and cancellation |
 | **Context** | `context.py` | N/A (compositor) | N/A | None | Composes: system prompt → conversation log → state panels (wrapped in `CURRENT STATE` markers), dispatches via `dispatch_llm()`/`dispatch_ui()`, detects changes via `changed_html()` |
 
 \* = frontend-callable (invocable from the browser without LLM involvement via `dispatch_ui()`)
 
 † = carries `initiator: Initiator` field (can originate from either LLM or UI)
-
-### Planned
-
-| Widget | State | DSL | Renders |
-|---|---|---|---|
-| **Pytest** | Test results | None (reactive) | `TESTS PASSING` or failure details |

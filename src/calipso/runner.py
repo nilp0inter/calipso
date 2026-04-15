@@ -35,7 +35,9 @@ async def run_turn(
 
         response = await model.request(messages, None, params)
 
-        tool_results, segment = await context.handle_response(response)
+        tool_results, segment = await context.handle_response(
+            response, on_update=on_update
+        )
 
         if on_update:
             await on_update()

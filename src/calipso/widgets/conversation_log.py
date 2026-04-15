@@ -370,7 +370,9 @@ def view_html(model: ConversationLogModel) -> str:
                     for msg in segment.messages:
                         tool_html.extend(_render_tool_parts(msg))
                     open_attr = " open" if segment.show_tools else ""
+                    expected = "true" if segment.show_tools else "false"
                     toggle_handler = (
+                        f"if(this.open!==({expected}))"
                         f"sendWidgetEvent('toggle_segment_tools',"
                         f"{{'turn_index':{i},'segment_index':{j}}})"
                     )
@@ -405,10 +407,10 @@ def view_html(model: ConversationLogModel) -> str:
                             else f"{tool_call_count} tool calls"
                         )
                         parts.append(
-                            '<details class="tool-group">'
-                            f"<summary>{label}</summary>"
+                            f'<div class="tool-group">'
+                            f'<span class="tool-group-label">{label}</span>'
                             f"{''.join(tool_parts)}"
-                            "</details>"
+                            f"</div>"
                         )
             parts.append("</div>")
         content = "".join(parts)

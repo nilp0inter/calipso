@@ -200,7 +200,9 @@ class TestTaskList:
 
     def test_frontend_tools(self):
         w = create_task_list()
-        assert w.frontend_tools() == frozenset({"create_task", "update_task_status", "remove_task"})
+        assert w.frontend_tools() == frozenset(
+            {"create_task", "update_task_status", "remove_task"}
+        )
 
 
 # --- ConversationLog ---
@@ -274,9 +276,7 @@ class TestConversationLog:
                 segment=seg,
             )
         )
-        await w.dispatch_llm(
-            "end_step", {"result": "Thing was done successfully"}
-        )
+        await w.dispatch_llm("end_step", {"result": "Thing was done successfully"})
         # The current segment (Seg0) should be summarized
         assert "Thing was done successfully" in w.model.turns[0].segments[0].summary
         # A new segment should exist for subsequent messages
@@ -490,17 +490,13 @@ class TestFileExplorer:
         f.write_text("{}")
         await w.dispatch_llm("read_file", {"path": str(f)})
         assert len(w.model.open_files) == 1
-        result = await w.dispatch_llm(
-            "close_read_file", {"path": str(f)}
-        )
+        result = await w.dispatch_llm("close_read_file", {"path": str(f)})
         assert "Closed" in result
         assert w.model.open_files == ()
 
     async def test_close_read_file_when_none_open(self):
         w = create_file_explorer()
-        result = await w.dispatch_llm(
-            "close_read_file", {"path": "nope.txt"}
-        )
+        result = await w.dispatch_llm("close_read_file", {"path": "nope.txt"})
         assert "No file is open" in result
 
     def test_view_messages_empty(self):

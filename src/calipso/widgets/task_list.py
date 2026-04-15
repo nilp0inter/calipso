@@ -208,7 +208,9 @@ def view_html(model: TaskListModel) -> str:
         ">"
         "</div>"
     )
-    return f'<div id="widget-task-list" class="widget"><h3>Tasks</h3>{items}{form}</div>'
+    return (
+        f'<div id="widget-task-list" class="widget"><h3>Tasks</h3>{items}{form}</div>'
+    )
 
 
 # --- Anticorruption layers ---

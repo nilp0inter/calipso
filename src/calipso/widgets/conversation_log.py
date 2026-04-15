@@ -228,10 +228,7 @@ def check_protocol(model: ConversationLogModel, tool_name: str) -> str | None:
         return None
     if tool_name == "end_step":
         if model.active_step is None:
-            return (
-                "Cannot call end_step without an active step. "
-                "Call begin_step first."
-            )
+            return "Cannot call end_step without an active step. Call begin_step first."
         if model.step_tool_count == 0:
             return (
                 "Cannot call end_step without doing anything. "
@@ -239,10 +236,7 @@ def check_protocol(model: ConversationLogModel, tool_name: str) -> str | None:
             )
         return None
     if model.active_step is None:
-        return (
-            f"Cannot execute '{tool_name}' outside a step. "
-            "Call begin_step first."
-        )
+        return f"Cannot execute '{tool_name}' outside a step. Call begin_step first."
     return None
 
 
@@ -311,15 +305,11 @@ def view_messages(model: ConversationLogModel) -> Iterator[ModelMessage]:
         yield ModelRequest(parts=[UserPromptPart(content=turn.user_message)])
         for segment in turn.segments:
             if segment.summary is not None:
-                yield ModelRequest(
-                    parts=[SystemPromptPart(content=segment.summary)]
-                )
+                yield ModelRequest(parts=[SystemPromptPart(content=segment.summary)])
                 for msg in segment.messages:
                     if isinstance(msg, ModelResponse):
                         tool_parts = [
-                            p
-                            for p in msg.parts
-                            if isinstance(p, ToolCallPart)
+                            p for p in msg.parts if isinstance(p, ToolCallPart)
                         ]
                         if tool_parts:
                             yield ModelResponse(
@@ -328,9 +318,7 @@ def view_messages(model: ConversationLogModel) -> Iterator[ModelMessage]:
                             )
                     elif isinstance(msg, ModelRequest):
                         tool_parts = [
-                            p
-                            for p in msg.parts
-                            if isinstance(p, ToolReturnPart)
+                            p for p in msg.parts if isinstance(p, ToolReturnPart)
                         ]
                         if tool_parts:
                             yield ModelRequest(parts=tool_parts)

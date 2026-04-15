@@ -112,9 +112,7 @@ def update(
         case DirectoryListError(error=error):
             return model, tool_result(error)
         case FileRead(path=path, content=content):
-            existing = tuple(
-                (p, c) for p, c in model.open_files if p != path
-            )
+            existing = tuple((p, c) for p, c in model.open_files if p != path)
             return (
                 replace(
                     model,
@@ -130,11 +128,7 @@ def update(
             return (
                 replace(
                     model,
-                    open_files=tuple(
-                        (p, c)
-                        for p, c in model.open_files
-                        if p != path
-                    ),
+                    open_files=tuple((p, c) for p, c in model.open_files if p != path),
                 ),
                 for_initiator(init, f"Closed: {path}"),
             )
@@ -287,9 +281,7 @@ def from_llm(model: FileExplorerModel, tool_name: str, args: dict) -> FileExplor
         case "read_file":
             return ReadFileRequested(path=args["path"])
         case "close_read_file":
-            return CloseReadFile(
-                path=args["path"], initiator=Initiator.LLM
-            )
+            return CloseReadFile(path=args["path"], initiator=Initiator.LLM)
     raise ValueError(f"FileExplorer: unknown tool '{tool_name}'")
 
 
@@ -302,9 +294,7 @@ def from_ui(
         case "read_file":
             return ReadFileRequested(path=args["path"])
         case "close_read_file":
-            return CloseReadFile(
-                path=args["path"], initiator=Initiator.UI
-            )
+            return CloseReadFile(path=args["path"], initiator=Initiator.UI)
     return None
 
 

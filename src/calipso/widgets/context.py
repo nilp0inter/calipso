@@ -68,9 +68,7 @@ class Context:
 
     def _currently_exposed_step_tools(self) -> frozenset[str]:
         """Return step tool names currently exposed to the LLM."""
-        return frozenset(
-            t.name for t in self.conversation_log.view_tools()
-        )
+        return frozenset(t.name for t in self.conversation_log.view_tools())
 
     def _all_widgets(self) -> Iterator[WidgetHandle]:
         yield self.system_prompt
@@ -129,9 +127,7 @@ class Context:
 
         # Pre-scan: end_step must appear at most once and be first
         tool_call_parts = [p for p in response.parts if isinstance(p, ToolCallPart)]
-        action_end_count = sum(
-            1 for p in tool_call_parts if p.tool_name == "end_step"
-        )
+        action_end_count = sum(1 for p in tool_call_parts if p.tool_name == "end_step")
         reject_action_end = action_end_count > 1 or (
             action_end_count == 1 and tool_call_parts[0].tool_name != "end_step"
         )
@@ -145,12 +141,14 @@ class Context:
 
             # Reject end_step if not first or duplicated
             if reject_action_end and name == "end_step":
-                tool_results.append((
-                    part.tool_call_id,
-                    "end_step must appear exactly once and be the first "
-                    "tool call in a response. Do not call tools before it or "
-                    "call it multiple times.",
-                ))
+                tool_results.append(
+                    (
+                        part.tool_call_id,
+                        "end_step must appear exactly once and be the first "
+                        "tool call in a response. Do not call tools before it or "
+                        "call it multiple times.",
+                    )
+                )
                 continue
 
             # Reject step tools that aren't currently exposed
@@ -158,10 +156,12 @@ class Context:
                 name in ALL_CONVERSATION_LOG_TOOLS
                 and name not in self._currently_exposed_step_tools()
             ):
-                tool_results.append((
-                    part.tool_call_id,
-                    f"Unknown tool: {name}",
-                ))
+                tool_results.append(
+                    (
+                        part.tool_call_id,
+                        f"Unknown tool: {name}",
+                    )
+                )
                 continue
 
             # Protocol enforcement

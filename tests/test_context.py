@@ -236,9 +236,7 @@ class TestContextDispatch:
             conversation_log=create_conversation_log(),
         )
         # begin_step is NOT in frontend_tools
-        result = await ctx.handle_widget_event(
-            "begin_step", {"description": "Hacked"}
-        )
+        result = await ctx.handle_widget_event("begin_step", {"description": "Hacked"})
         assert result is None
 
     async def test_widget_event_rejects_unknown_tool(self):

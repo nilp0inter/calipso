@@ -38,6 +38,7 @@ class Segment:
 
     messages: list[ModelMessage] = field(default_factory=list)
     summary: str | None = None
+    show_tools: bool = False
 
 
 @dataclass
@@ -106,6 +107,12 @@ class ToolTracked:
     tool_name: str
 
 
+@dataclass(frozen=True)
+class ToggleSegmentTools:
+    turn_index: int
+    segment_index: int
+
+
 ConversationLogMsg = (
     UserMessageReceived
     | ResponseReceived
@@ -113,6 +120,7 @@ ConversationLogMsg = (
     | BeginStep
     | EndStep
     | ToolTracked
+    | ToggleSegmentTools
 )
 
 
@@ -207,6 +215,12 @@ def update(
         case ToolTracked(tool_name=_):
             if model.active_step is not None:
                 model.step_tool_count += 1
+            return model, none
+
+        case ToggleSegmentTools(turn_index=ti, segment_index=si):
+            model.turns[ti].segments[si].show_tools = (
+                not model.turns[ti].segments[si].show_tools
+            )
             return model, none
 
 
@@ -306,22 +320,23 @@ def view_messages(model: ConversationLogModel) -> Iterator[ModelMessage]:
         for segment in turn.segments:
             if segment.summary is not None:
                 yield ModelRequest(parts=[SystemPromptPart(content=segment.summary)])
-                for msg in segment.messages:
-                    if isinstance(msg, ModelResponse):
-                        tool_parts = [
-                            p for p in msg.parts if isinstance(p, ToolCallPart)
-                        ]
-                        if tool_parts:
-                            yield ModelResponse(
-                                parts=tool_parts,
-                                model_name=msg.model_name,
-                            )
-                    elif isinstance(msg, ModelRequest):
-                        tool_parts = [
-                            p for p in msg.parts if isinstance(p, ToolReturnPart)
-                        ]
-                        if tool_parts:
-                            yield ModelRequest(parts=tool_parts)
+                if segment.show_tools:
+                    for msg in segment.messages:
+                        if isinstance(msg, ModelResponse):
+                            tool_parts = [
+                                p for p in msg.parts if isinstance(p, ToolCallPart)
+                            ]
+                            if tool_parts:
+                                yield ModelResponse(
+                                    parts=tool_parts,
+                                    model_name=msg.model_name,
+                                )
+                        elif isinstance(msg, ModelRequest):
+                            tool_parts = [
+                                p for p in msg.parts if isinstance(p, ToolReturnPart)
+                            ]
+                            if tool_parts:
+                                yield ModelRequest(parts=tool_parts)
             else:
                 yield from segment.messages
 
@@ -349,13 +364,19 @@ def view_html(model: ConversationLogModel) -> str:
                 f"{user_html}"
                 f"</div>"
             )
-            for segment in turn.segments:
+            for j, segment in enumerate(turn.segments):
                 if segment.summary is not None:
                     tool_html = []
                     for msg in segment.messages:
                         tool_html.extend(_render_tool_parts(msg))
+                    open_attr = " open" if segment.show_tools else ""
+                    toggle_handler = (
+                        f"sendWidgetEvent('toggle_segment_tools',"
+                        f"{{'turn_index':{i},'segment_index':{j}}})"
+                    )
                     parts.append(
-                        f'<details class="tool-group">'
+                        f'<details class="tool-group"{open_attr}'
+                        f' ontoggle="{toggle_handler}">'
                         f"<summary>"
                         f"{html_mod.escape(segment.summary)}"
                         f"</summary>"
@@ -473,7 +494,15 @@ def from_llm(
     raise ValueError(f"ConversationLog: unknown tool '{tool_name}'")
 
 
-# No frontend tools for ConversationLog
+def from_ui(
+    model: ConversationLogModel, event_name: str, args: dict
+) -> ConversationLogMsg | None:
+    if event_name == "toggle_segment_tools":
+        return ToggleSegmentTools(
+            turn_index=int(args["turn_index"]),
+            segment_index=int(args["segment_index"]),
+        )
+    return None
 
 
 # --- Factory ---
@@ -488,4 +517,6 @@ def create_conversation_log() -> WidgetHandle:
         view_tools=view_tools,
         view_html=view_html,
         from_llm=from_llm,
+        from_ui=from_ui,
+        frontend_tools=frozenset({"toggle_segment_tools"}),
     )

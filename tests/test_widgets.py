@@ -284,7 +284,7 @@ class TestConversationLog:
         assert len(w.model.turns[0].segments) == 2
         assert w.model.active_step is None
 
-    async def test_summarized_segment_renders_summary_and_tool_calls(self):
+    async def test_summarized_segment_hides_tools_by_default(self):
         from calipso.widgets.conversation_log import (
             ResponseReceived,
             ToolResultsReceived,
@@ -328,7 +328,56 @@ class TestConversationLog:
         assert len(summaries) == 1
         # The original response (with TextPart) should NOT appear as-is
         assert inner_response not in msgs
-        # But a ModelResponse with the ToolCallPart SHOULD appear
+        # Tool calls should NOT appear (show_tools defaults to False)
+        tool_call_msgs = [
+            m
+            for m in msgs
+            if isinstance(m, ModelResponse)
+            and any(isinstance(p, ToolCallPart) for p in m.parts)
+        ]
+        assert len(tool_call_msgs) == 0
+        # Tool returns should NOT appear either
+        tool_return_msgs = [
+            m
+            for m in msgs
+            if isinstance(m, ModelRequest)
+            and any(isinstance(p, ToolReturnPart) for p in m.parts)
+        ]
+        assert len(tool_return_msgs) == 0
+
+    async def test_summarized_segment_shows_tools_when_flag_set(self):
+        from calipso.widgets.conversation_log import (
+            ResponseReceived,
+            ToolResultsReceived,
+            current_segment,
+        )
+
+        w = create_conversation_log()
+        w.send(UserMessageReceived(text="Do something"))
+        await w.dispatch_llm("begin_step", {"description": "Do the thing"})
+        seg = current_segment(w.model)
+        tool_call = ToolCallPart(
+            tool_name="read_file",
+            args={"path": "/tmp/x"},
+            tool_call_id="tc1",
+        )
+        inner_response = ModelResponse(
+            parts=[TextPart(content="working..."), tool_call]
+        )
+        w.send(ResponseReceived(response=inner_response, segment=seg))
+        tool_return = ToolReturnPart(
+            tool_name="read_file", content="file contents", tool_call_id="tc1"
+        )
+        w.send(
+            ToolResultsReceived(request=ModelRequest(parts=[tool_return]), segment=seg)
+        )
+        await w.dispatch_llm("end_step", {"result": "Done!"})
+
+        # Enable tool visibility for the summarized segment
+        seg.show_tools = True
+
+        msgs = list(w.view_messages())
+        # Tool calls SHOULD appear when show_tools is True
         tool_call_msgs = [
             m
             for m in msgs
@@ -337,7 +386,7 @@ class TestConversationLog:
         ]
         assert len(tool_call_msgs) == 1
         assert tool_call_msgs[0].parts == [tool_call]
-        # And the ToolReturnPart SHOULD appear
+        # Tool returns SHOULD appear too
         tool_return_msgs = [
             m
             for m in msgs
@@ -345,6 +394,30 @@ class TestConversationLog:
             and any(isinstance(p, ToolReturnPart) for p in m.parts)
         ]
         assert len(tool_return_msgs) == 1
+
+    async def test_toggle_segment_tools(self):
+        from calipso.widgets.conversation_log import (
+            ToggleSegmentTools,
+            current_segment,
+        )
+
+        w = create_conversation_log()
+        w.send(UserMessageReceived(text="Do something"))
+        await w.dispatch_llm("begin_step", {"description": "Do the thing"})
+        seg = current_segment(w.model)
+        seg.messages.append(ModelResponse(parts=[TextPart(content="ok")]))
+        await w.dispatch_llm("end_step", {"result": "Done!"})
+
+        # Default: show_tools is False
+        assert w.model.turns[0].segments[0].show_tools is False
+
+        # Toggle via message
+        w.send(ToggleSegmentTools(turn_index=0, segment_index=0))
+        assert w.model.turns[0].segments[0].show_tools is True
+
+        # Toggle again
+        w.send(ToggleSegmentTools(turn_index=0, segment_index=0))
+        assert w.model.turns[0].segments[0].show_tools is False
 
     async def test_summarized_segment_drops_text_parts(self):
         """Text-only responses in summarized segments are dropped entirely."""

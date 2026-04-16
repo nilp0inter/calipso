@@ -35,7 +35,7 @@ async def run_turn(
 
         response = await model.request(messages, None, params)
 
-        tool_results, segment = await context.handle_response(
+        tool_results, owning_task_id = await context.handle_response(
             response, on_update=on_update
         )
 
@@ -46,7 +46,7 @@ async def run_turn(
             # No tool calls — the model produced a text response
             return response.text or ""
 
-        # Build tool return message and record it in the same segment
+        # Build tool return message and record it tagged with the owning task
         tool_return_parts = [
             ToolReturnPart(
                 tool_name=_find_tool_name(response, call_id),
@@ -57,7 +57,7 @@ async def run_turn(
         ]
         tool_request = ModelRequest(parts=tool_return_parts)
         context.conversation_log.send(
-            ToolResultsReceived(request=tool_request, segment=segment)
+            ToolResultsReceived(request=tool_request, owning_task_id=owning_task_id)
         )
 
 

@@ -20,10 +20,9 @@ Everything the model sees is composed from **widgets** — Elm Architecture comp
 flowchart TB
     Context["Context\n(root widget)"]
     Context -- "1. system_prompt" --> SP["SystemPrompt"]
-    Context -- "2. conversation_log" --> CL["ConversationLog"]
+    Context -- "2. conversation_log\n(tasks + history)" --> CL["ConversationLog"]
     Context -- "3. children (state panels)" --> AgentsMd["AgentsMd"]
     Context -- "3. children (state panels)" --> Goal["Goal"]
-    Context -- "3. children (state panels)" --> TL["TaskList"]
     Context -- "3. children (state panels)" --> CE["CodeExplorer"]
     Context -- "3. children (state panels)" --> FE["FileExplorer"]
     Context -- "3. children (state panels)" --> TS["TestSuite"]
@@ -56,12 +55,25 @@ The runner is a thin agentic loop that only talks to the Context:
 
 The agent runs a live browser dashboard alongside the agentic loop. A `DashboardServer` (aiohttp) serves an htmx SPA and maintains WebSocket connections. After every widget state change, the Context computes which widgets' `view_html()` output changed (via string comparison against a cache) and the server pushes only the changed HTML fragments using htmx's out-of-band swap mechanism (`hx-swap-oob`). Each widget has a stable HTML element ID derived from its class name.
 
-The browser is both an input and interaction channel. User messages are sent via WebSocket as `{"user_input": "..."}` and enqueued for the runner. Widgets can also declare **frontend tools** — a subset of their tools callable directly from the browser via `{"widget_event": {"tool_name": "...", "args": {...}}}` messages. Frontend events bypass the LLM and step protocol, running through the same `from_ui → update → Cmd loop` path and pushing the resulting HTML changes back. Messages that can originate from both the LLM and the browser carry an `initiator: Initiator` field so `update` knows whether to produce a tool response (`CmdToolResult`) or not (`CmdNone`). This allows widgets to render interactive HTML (buttons, checkboxes, forms) that mutate their own state without an LLM round-trip. During a turn, the dashboard shows a thinking indicator and disables the input.
+The browser is both an input and interaction channel. User messages are sent via WebSocket as `{"user_input": "..."}` and enqueued for the runner. Widgets can also declare **frontend tools** — a subset of their tools callable directly from the browser via `{"widget_event": {"tool_name": "...", "args": {...}}}` messages. Frontend events bypass the LLM and the task protocol, running through the same `from_ui → update → Cmd loop` path and pushing the resulting HTML changes back. Messages that can originate from both the LLM and the browser carry an `initiator: Initiator` field so `update` knows whether to produce a tool response (`CmdToolResult`) or not (`CmdNone`). This allows widgets to render interactive HTML (buttons, checkboxes, forms) that mutate their own state without an LLM round-trip. During a turn, the dashboard shows a thinking indicator and disables the input.
 
 All widget HTML output is rendered through a shared `render_md()` function that converts markdown to safe HTML (raw HTML in input is escaped before markdown processing).
 
 ## Current state
 
-The agent has nine widgets: `SystemPrompt` (static identity/framing text), `AgentsMd` (behavioral instructions loaded from `AGENTS.md`), `Goal` (directional — set/clear, editable from browser), `TaskList` (organizational — CRUD with interactive checkboxes and remove buttons), `ConversationLog` (manages user/assistant turns partitioned into segments with step protocol enforcement — summarized segments hide tool calls from the LLM by default with a per-segment toggle in the browser dashboard, unsummarized segments render full messages), `CodeExplorer` (tree-sitter-based code reading — the agent opens files, runs S-expression queries, and sees only signatures plus LLM-generated summaries with `[...REDACTED...]` markers replacing code bodies), `FileExplorer` (directory listing and file reading for non-Python files), `TestSuite` (configurable test runner with subprocess tracking and cancellation), and `TokenUsage` (display-only bar chart of input/output tokens per LLM request).
+The agent has eight widgets: `SystemPrompt` (static identity/framing text), `AgentsMd` (behavioral instructions loaded from `AGENTS.md`), `Goal` (directional — set/clear, editable from browser; its tools are declared *protocol-free* so they remain callable with no active task), `ConversationLog` (tasks + conversation history in one widget — enforces the task protocol, owns the chronological log of user messages / LLM responses / tool results, each tagged with the task that owned them; done-task spans collapse to a memory-only block for the LLM), `CodeExplorer` (tree-sitter-based code reading — the agent opens files, runs S-expression queries, and sees only signatures plus LLM-generated summaries with `[...REDACTED...]` markers replacing code bodies), `FileExplorer` (directory listing and file reading for non-Python files), `TestSuite` (configurable test runner with subprocess tracking and cancellation), and `TokenUsage` (display-only bar chart of input/output tokens per LLM request).
 
-The Context renders in a specific order: system prompt first, then conversation history, then state panels (wrapped in `CURRENT STATE` / `END STATE` markers as user messages) so the model sees live state right before generating its response.
+The Context renders in a specific order: system prompt first, then the `ConversationLog` (protocol rules + chronological log with done-task collapsing + open-tasks block), then state panels (wrapped in `CURRENT STATE` / `END STATE` markers as user messages) so the model sees live state right before generating its response.
+
+## Task protocol
+
+`ConversationLog` partitions the conversation by **tasks**. A task moves through `PENDING → IN_PROGRESS → DONE`, and only one task may be `IN_PROGRESS` at a time. The protocol has six LLM tools (`create_task`, `start_task`, `task_memory`, `close_current_task`, `task_pick`, `remove_task`) plus UI-only affordances for editing/removing memories and toggling visual expansion. Key rules:
+
+- **Every non-task, non-goal tool call requires an `IN_PROGRESS` task.** `set_goal` / `clear_goal` are declared *protocol-free* via a `create_widget(protocol_free_tools=…)` parameter and remain callable with no active task; everything else is rejected outside a task.
+- **`close_current_task` must be the first and only tool call** in its response (mirrors the previous `end_step` rule) — the LLM must have seen all tool results before closing. Closing requires at least one memory.
+- **Once a task is `DONE`, its span collapses** for future prompts into a system-prompt block containing the task id, description, and LLM-authored memories. The raw tool calls/results are no longer visible to the LLM.
+- **`task_pick(task_id)` re-expands a done task's full log for exactly one `Model.request()`** — a single-round-trip escape hatch. The Context clears the pick set at the start of the next `handle_response`.
+- **`in_progress` persists across user turns.** A mid-task user message is appended to the active task's log; the task is only closed when the LLM explicitly calls `close_current_task`.
+- **Only `PENDING` tasks can be removed.** `IN_PROGRESS` and `DONE` tasks are frozen — their log/memories cannot be erased.
+
+The UI renders the open-tasks list and per-task controls inline in the chat flow, with a separate visual expand/collapse (`ui_expanded`) on done tasks that is fully independent of what the LLM sees. A 🔍 marker indicates a task the LLM has picked for expansion on the next request.

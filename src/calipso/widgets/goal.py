@@ -147,4 +147,5 @@ def create_goal(text: str | None = None) -> WidgetHandle:
         from_llm=from_llm,
         from_ui=from_ui,
         frontend_tools=frozenset({"set_goal", "clear_goal"}),
+        protocol_free_tools=frozenset({"set_goal", "clear_goal"}),
     )

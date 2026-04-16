@@ -30,7 +30,7 @@ The agentic loop. Takes a `Model` and a `Context`, then:
 
 An aiohttp HTTP + WebSocket server that provides a live browser dashboard. Serves the SPA at `/` and accepts WebSocket connections at `/ws`. On connection, sends all widget HTML. After every state mutation, pushes only changed widget fragments via htmx out-of-band swaps. Also handles turn lifecycle signals (thinking indicator, input disabling).
 
-The server handles two types of inbound WebSocket messages: `user_input` (enqueued for the runner's main loop) and `widget_event` (dispatched synchronously to the target widget's `dispatch_ui()` method via `Context.handle_widget_event()`, bypassing the LLM and step protocol). After a widget event, changed HTML is pushed immediately.
+The server handles two types of inbound WebSocket messages: `user_input` (enqueued for the runner's main loop) and `widget_event` (dispatched synchronously to the target widget's `dispatch_ui()` method via `Context.handle_widget_event()`, bypassing the LLM and the task protocol). After a widget event, changed HTML is pushed immediately.
 
 ## CLI
 
@@ -62,7 +62,7 @@ Everything in the agent's context is a widget — an Elm-inspired component foll
 
 Following the Elm architecture, `update` never performs I/O. Instead it returns a `Cmd` (`src/calipso/cmd.py`) — a value describing what should happen next. The runtime (`WidgetHandle.dispatch_llm`) executes the Cmd loop:
 
-- **`CmdNone`** (`none` singleton) — no effect, no response. Used by internal messages (e.g., `UserMessageReceived`, `ToolTracked`).
+- **`CmdNone`** (`none` singleton) — no effect, no response. Used by internal messages (e.g., `UserMessageReceived`, `ConsumePicks`, UI-only memory edits).
 - **`CmdToolResult(text)`** — no effect; respond to the LLM tool call with text. Only meaningful when the initiator is the LLM.
 - **`CmdEffect(perform, to_msg)`** — an async thunk (`perform`) the runtime awaits, then converts the result into a Msg via `to_msg`, feeds it back into `update`, and recurses until a non-effect Cmd is reached.
 
@@ -70,13 +70,17 @@ The Cmd loop runs in `dispatch_llm` and `dispatch_ui`: `from_llm/from_ui → Msg
 
 ### Initiator — LLM vs UI
 
-Messages that can originate from both the LLM and the browser carry an `initiator: Initiator` field — an enum with `LLM` and `UI` values. The `update` function uses the `for_initiator(initiator, text)` helper to return `CmdToolResult(text)` for LLM-initiated messages (so the tool gets a response) or `CmdNone` for UI-initiated messages (no tool call to respond to). Messages that can only come from the LLM (e.g., `CreateTask`, `OpenFileRequested`) use `tool_result()` directly.
+Messages that can originate from both the LLM and the browser carry an `initiator: Initiator` field — an enum with `LLM` and `UI` values. The `update` function uses the `for_initiator(initiator, text)` helper to return `CmdToolResult(text)` for LLM-initiated messages (so the tool gets a response) or `CmdNone` for UI-initiated messages (no tool call to respond to). Messages that can only come from the LLM (e.g., `PickTask`, `OpenFileRequested`) use `tool_result()` directly.
 
 ### WidgetHandle
 
-Widgets are created via factory functions that return a `WidgetHandle` (`src/calipso/widget.py`) — the uniform interface holding a model reference + function table. The handle exposes: `view_messages()`, `view_tools()`, `view_html()`, `widget_id()`, `frontend_tools()`, `dispatch_llm(on_update=)` (from_llm → update → Cmd loop), `dispatch_ui(on_update=)` (from_ui → update → Cmd loop), `send(msg)` (direct Msg dispatch bypassing anticorruption layers, must produce `CmdNone`), and `.model` (read access to current state). Both dispatch methods accept an optional `on_update` async callback that fires after each model mutation — before the next effect executes — mirroring Elm's render-between-updates semantics. The dashboard server passes `push_updates` as this callback so the browser sees intermediate states (e.g., "running" before a subprocess completes). Views compose via `yield from`. HTML is rendered via `render_md()` (markdown to safe HTML).
+Widgets are created via factory functions that return a `WidgetHandle` (`src/calipso/widget.py`) — the uniform interface holding a model reference + function table. The handle exposes: `view_messages()`, `view_tools()`, `view_html()`, `widget_id()`, `frontend_tools()`, `protocol_free_tools()`, `dispatch_llm(on_update=)` (from_llm → update → Cmd loop), `dispatch_ui(on_update=)` (from_ui → update → Cmd loop), `send(msg)` (direct Msg dispatch bypassing anticorruption layers, must produce `CmdNone`), and `.model` (read access to current state). Both dispatch methods accept an optional `on_update` async callback that fires after each model mutation — before the next effect executes — mirroring Elm's render-between-updates semantics. The dashboard server passes `push_updates` as this callback so the browser sees intermediate states (e.g., "running" before a subprocess completes). Views compose via `yield from`. HTML is rendered via `render_md()` (markdown to safe HTML).
 
-I/O resources (e.g., CodeExplorer's tree-sitter parser and summarizer agent) are captured in `update` closures by the factory, not stored in the model. These closures construct `CmdEffect` thunks that reference the resources but don't execute them — the runtime does. The ConversationLog is a regular `WidgetHandle` — Context interacts with it via `send()` for direct Msgs and pure query functions (`check_protocol()`, `current_segment()`) imported from the module.
+I/O resources (e.g., CodeExplorer's tree-sitter parser and summarizer agent) are captured in `update` closures by the factory, not stored in the model. These closures construct `CmdEffect` thunks that reference the resources but don't execute them — the runtime does. The ConversationLog is a regular `WidgetHandle` — Context interacts with it via `send()` for direct Msgs and pure query functions (`check_protocol(model, tool_name, protocol_free_tools)`, `current_owning_task_id(model)`) imported from the module.
+
+### Protocol-free tools
+
+Factories can mark a subset of their tools as **protocol-free** via `create_widget(protocol_free_tools=frozenset(...))`. Protocol-free tools remain callable when no task is `in_progress` — the Context unions these across all widgets at construction and passes the set to `ConversationLog.check_protocol`. The only widget that currently uses this is `Goal` (for `set_goal` / `clear_goal`); all other non-task tools require an active task.
 
 ### Implemented
 
@@ -84,15 +88,16 @@ I/O resources (e.g., CodeExplorer's tree-sitter parser and summarizer agent) are
 |---|---|---|---|---|---|
 | **SystemPrompt** | `system_prompt.py` | `SystemPromptModel(text)` | None (no update) | None | Identity and workspace framing text |
 | **AgentsMd** | `agents_md.py` | `AgentsMdModel(loaded_path, content, error)` | `ReloadRequested† \| AgentsReloaded†` | `reload_agents_md`\* | Behavioral instructions from `AGENTS.md`/`CLAUDE.md` |
-| **Goal** | `goal.py` | `GoalModel(text)` | `SetGoal† \| ClearGoal†` | `set_goal`\*, `clear_goal`\* | Goal panel with inline edit input and clear button |
-| **TaskList** | `task_list.py` | `TaskListModel(tasks, next_id)` | `CreateTask \| UpdateTaskStatus† \| RemoveTask†` | `create_task`, `update_task_status`\*, `remove_task`\* | Checklist with interactive checkboxes and remove buttons |
-| **ConversationLog** | `conversation_log.py` | `ConversationLogModel(turns, active_step, ...)` | `UserMessageReceived \| ResponseReceived \| ToolResultsReceived \| BeginStep \| EndStep \| ToolTracked \| ToggleSegmentTools` | `begin_step`, `end_step`, `toggle_segment_tools`\* | Step protocol rules + conversation history; summarized segments hide tool calls from LLM by default, toggleable per-segment from the browser via `<details>` open/close |
+| **Goal** | `goal.py` | `GoalModel(text)` | `SetGoal† \| ClearGoal†` | `set_goal`\*‡, `clear_goal`\*‡ | Goal panel with inline edit input and clear button; tools are protocol-free (callable outside a task) |
+| **ConversationLog** | `conversation_log.py` | `ConversationLogModel(log, tasks, task_order, active_task_id, picks_for_next_request, next_id)` | `CreateTask† \| StartTask† \| TaskMemoryAppend† \| CloseCurrentTask† \| PickTask† \| RemoveTask† \| EditMemory \| RemoveMemory \| ToggleTaskExpanded \| UpdateTaskStatus† \| UserMessageReceived \| ResponseReceived \| ToolResultsReceived \| ConsumePicks` | `create_task`\*, `start_task`\*, `task_memory`\*, `close_current_task`\*, `task_pick`\*, `remove_task`\* + UI-only `edit_memory`, `remove_memory`, `toggle_task_expanded`, `update_task_status` | Task protocol rules + chronological log (user msgs / responses / tool results tagged with owning task id) + inline open-tasks list; `DONE` task spans collapse to a memory-only system-prompt block, `task_pick` expands one done task for the next request only, UI `<details>` toggle is visual-only (independent of LLM view), 🔍 marker for picked tasks |
 | **CodeExplorer** | `code_explorer.py` | `CodeExplorerModel(open_files, query_results)` | `OpenFileRequested \| FileOpened \| FileOpenError \| FileClosed† \| QueryRequested \| QueryAllRequested \| QueryCompleted \| QueryError` | `open_file`, `close_file`\*, `query`, `query_all` | Open files + tree-sitter query results (signatures + `[...REDACTED...]` body summaries) |
 | **FileExplorer** | `file_explorer.py` | `FileExplorerModel(listing_*, open_files)` | `ListDirectoryRequested \| DirectoryListed \| DirectoryListError \| ReadFileRequested \| FileRead \| FileReadError \| CloseReadFile†` | `list_directory`\*, `read_file`\*, `close_read_file`\* | Directory listing + multiple open files with interactive browsing (root button, double-click navigation); rejects `.py` files |
 | **TestSuite** | `test_suite.py` | `TestSuiteModel(command, env_vars, timeout, status, stdout, stderr, stale)` | `ConfigureTestRunner† \| RunTestsRequested† \| CancelTestsRequested† \| TestsCompleted \| TestsCancelled \| TestsTimedOut \| TestsError` | `configure_test_runner`\*, `run_tests`\*, `cancel_tests`\* | Config form (command, env vars, timeout) + status badge (idle/running/passed/failed/cancelled/timeout/error) + stdout/stderr output; uses closure-captured `proc_ref` for subprocess tracking and cancellation |
 | **TokenUsage** | `token_usage.py` | `TokenUsageModel(records)` | `UsageRecorded` | None | Inline SVG stacked bar chart (input/output tokens per request) with legend and cumulative totals; display-only, receives data via `send()` from Context after each `Model.request()` response |
-| **Context** | `context.py` | N/A (compositor) | N/A | None | Composes: system prompt → conversation log → state panels (wrapped in `CURRENT STATE` markers), dispatches via `dispatch_llm()`/`dispatch_ui()`, detects changes via `changed_html()`, pushes token usage after each response |
+| **Context** | `context.py` | N/A (compositor) | N/A | None | Composes: system prompt → conversation_log (protocol rules + log + open-tasks block) → state panels (wrapped in `CURRENT STATE` markers), dispatches via `dispatch_llm()`/`dispatch_ui()`, enforces the `close_current_task` first-and-only rule, consumes `picks_for_next_request` at the start of each `handle_response`, detects changes via `changed_html()`, pushes token usage after each response |
 
 \* = frontend-callable (invocable from the browser without LLM involvement via `dispatch_ui()`)
 
 † = carries `initiator: Initiator` field (can originate from either LLM or UI)
+
+‡ = protocol-free (callable even when no task is `in_progress`)

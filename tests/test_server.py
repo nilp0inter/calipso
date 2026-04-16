@@ -10,7 +10,6 @@ from calipso.widgets import (
     create_conversation_log,
     create_goal,
     create_system_prompt,
-    create_task_list,
 )
 
 models.ALLOW_MODEL_REQUESTS = False
@@ -21,7 +20,7 @@ pytestmark = pytest.mark.anyio
 def _make_context():
     return Context(
         system_prompt=create_system_prompt(),
-        children=[create_goal(), create_task_list()],
+        children=[create_goal()],
         conversation_log=create_conversation_log(),
     )
 

@@ -14,12 +14,12 @@ calipso/
 │   └── widgets/              # Widget modules
 │       ├── system_prompt.py  # Identity + workspace framing
 │       ├── agents_md.py      # Behavioral instructions from AGENTS.md
-│       ├── goal.py           # Goal widget
-│       ├── task_list.py      # TaskList widget
+│       ├── goal.py           # Goal widget (protocol-free tools)
 │       ├── code_explorer.py  # Tree-sitter code reading + summarization
 │       ├── file_explorer.py  # Filesystem navigation + non-Python file reading
 │       ├── test_suite.py     # Test runner configuration + execution
-│       ├── conversation_log.py # Conversation + step protocol
+│       ├── token_usage.py    # Per-request token-usage bar chart
+│       ├── conversation_log.py # Tasks + conversation history (task protocol)
 │       └── context.py        # Root context widget (composes all)
 ├── tests/                    # Test suite (pytest + anyio)
 ├── docs/src/                 # mdBook documentation source

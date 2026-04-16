@@ -13,7 +13,6 @@ from calipso.widgets.goal import GoalModel, create_goal
 from calipso.widgets.goal import view_html as goal_view_html
 from calipso.widgets.system_prompt import SystemPromptModel, create_system_prompt
 from calipso.widgets.system_prompt import view_html as sp_view_html
-from calipso.widgets.task_list import create_task_list
 
 models.ALLOW_MODEL_REQUESTS = False
 pytestmark = pytest.mark.anyio
@@ -28,9 +27,6 @@ class TestWidgetId:
 
     def test_goal_id(self):
         assert create_goal().widget_id() == "widget-goal"
-
-    def test_task_list_id(self):
-        assert create_task_list().widget_id() == "widget-task-list"
 
     def test_conversation_log_id(self):
         assert create_conversation_log().widget_id() == "widget-conversation-log"
@@ -50,10 +46,6 @@ class TestViewHtmlIds:
     def test_goal_has_id(self):
         html = create_goal().view_html()
         assert 'id="widget-goal"' in html
-
-    def test_task_list_has_id(self):
-        html = create_task_list().view_html()
-        assert 'id="widget-task-list"' in html
 
     def test_conversation_log_has_id(self):
         html = create_conversation_log().view_html()
@@ -93,29 +85,11 @@ class TestGoalHtml:
         assert "<b>" not in html
 
 
-class TestTaskListHtml:
-    def test_empty(self):
-        html = create_task_list().view_html()
-        assert "No tasks" in html
-
-    async def test_with_tasks(self):
-        tl = create_task_list()
-        await tl.dispatch_llm("create_task", {"description": "Write tests"})
-        html = tl.view_html()
-        assert "Write tests" in html
-        assert "<ul>" in html
-
-    async def test_escapes_task_description(self):
-        tl = create_task_list()
-        await tl.dispatch_llm("create_task", {"description": "<img src=x>"})
-        html = tl.view_html()
-        assert "<img" not in html
-
-
 class TestConversationLogHtml:
-    def test_empty(self):
+    def test_empty_has_task_input(self):
         html = create_conversation_log().view_html()
-        assert "No messages yet" in html
+        assert "Add a task" in html
+        assert "widget-conversation-log" in html
 
     def test_with_user_message(self):
         cl = create_conversation_log()
@@ -123,6 +97,18 @@ class TestConversationLogHtml:
         html = cl.view_html()
         assert "Hello" in html
         assert "msg sent" in html
+
+    async def test_open_task_appears_in_panel(self):
+        cl = create_conversation_log()
+        await cl.dispatch_llm("create_task", {"description": "Write tests"})
+        html = cl.view_html()
+        assert "Write tests" in html
+
+    async def test_escapes_task_description(self):
+        cl = create_conversation_log()
+        await cl.dispatch_llm("create_task", {"description": "<img src=x>"})
+        html = cl.view_html()
+        assert "<img" not in html
 
 
 class TestAgentsMdHtml:
@@ -148,15 +134,15 @@ class TestContextChangedHtml:
     def _make_context(self):
         return Context(
             system_prompt=create_system_prompt(),
-            children=[create_goal(), create_task_list()],
+            children=[create_goal()],
             conversation_log=create_conversation_log(),
         )
 
     def test_all_html_returns_all_widgets(self):
         ctx = self._make_context()
         all_h = ctx.all_html()
-        # system_prompt + goal + task_list + conversation_log = 4
-        assert len(all_h) == 4
+        # system_prompt + goal + conversation_log = 3
+        assert len(all_h) == 3
 
     def test_changed_html_empty_after_all_html(self):
         ctx = self._make_context()
@@ -173,14 +159,12 @@ class TestContextChangedHtml:
         assert len(changed) == 1
         assert "New goal" in changed[0]
 
-    async def test_changed_html_only_returns_changed(self):
+    async def test_changed_html_detects_task_creation(self):
         ctx = self._make_context()
         ctx.all_html()
-        # Mutate task list, leave goal alone
-        await ctx.children[1].dispatch_llm("create_task", {"description": "Do stuff"})
+        # Mutate conversation_log via a UI widget event to add a task
+        await ctx.handle_widget_event("create_task", {"description": "Do stuff"})
         changed = ctx.changed_html()
-        ids = [c for c in changed if "widget-task-list" in c]
-        assert len(ids) == 1
+        assert any("widget-conversation-log" in c and "Do stuff" in c for c in changed)
         # Goal should not be in changed
-        goal_ids = [c for c in changed if "widget-goal" in c]
-        assert len(goal_ids) == 0
+        assert not any("widget-goal" in c for c in changed)

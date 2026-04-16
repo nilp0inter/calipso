@@ -15,12 +15,11 @@ from pydantic_ai.tools import ToolDefinition
 from calipso.widget import WidgetHandle
 from calipso.widgets.conversation_log import (
     ALL_CONVERSATION_LOG_TOOLS,
+    ConsumePicks,
     ResponseReceived,
-    Segment,
-    ToolTracked,
     UserMessageReceived,
     check_protocol,
-    current_segment,
+    current_owning_task_id,
 )
 from calipso.widgets.token_usage import UsageRecorded
 
@@ -36,11 +35,11 @@ class Context:
     the tree structure inside. The Context handles:
     - Composing all child views via yield from
     - Dispatching tool calls to the owning widget
-    - Enforcing cross-widget protocols (action log)
+    - Enforcing cross-widget protocols (task protocol)
 
     Layout order:
     1. system_prompt (identity + framing)
-    2. conversation_log (action protocol rules + conversation history)
+    2. conversation_log (task protocol rules + conversation history)
     3. children (state panels, wrapped in markers)
     """
 
@@ -51,6 +50,9 @@ class Context:
     _tool_owners: dict[str, WidgetHandle] = field(
         init=False, repr=False, default_factory=dict
     )
+    _protocol_free_tool_names: frozenset[str] = field(
+        init=False, repr=False, default_factory=frozenset
+    )
     _html_cache: dict[str, str] = field(init=False, repr=False, default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -58,20 +60,23 @@ class Context:
 
     def _rebuild_tool_owners(self) -> None:
         self._tool_owners.clear()
+        protocol_free: set[str] = set()
         for widget in self._all_widgets():
             for tool_def in widget.view_tools():
                 self._tool_owners[tool_def.name] = widget
             for name in widget.frontend_tools():
                 self._tool_owners.setdefault(name, widget)
-        # Conversation log owns all step tools even when not
-        # currently exposed (view_tools is state-dependent).
-        # We register them so dispatch can find the owner, but
-        # _currently_exposed_step_tools() gates actual execution.
+            protocol_free.update(widget.protocol_free_tools())
+        # Conversation log owns all task tools even when not currently
+        # exposed (view_tools is state-dependent). Register so dispatch
+        # can find the owner; _currently_exposed_task_tools() gates
+        # actual execution.
         for name in ALL_CONVERSATION_LOG_TOOLS:
             self._tool_owners[name] = self.conversation_log
+        self._protocol_free_tool_names = frozenset(protocol_free)
 
-    def _currently_exposed_step_tools(self) -> frozenset[str]:
-        """Return step tool names currently exposed to the LLM."""
+    def _currently_exposed_task_tools(self) -> frozenset[str]:
+        """Return task tool names currently exposed to the LLM."""
         return frozenset(t.name for t in self.conversation_log.view_tools())
 
     def _all_widgets(self) -> Iterator[WidgetHandle]:
@@ -121,23 +126,29 @@ class Context:
         self,
         response: ModelResponse,
         on_update: Callable[[], Awaitable[None]] | None = None,
-    ) -> tuple[list[tuple[str, str]], Segment]:
+    ) -> tuple[list[tuple[str, str]], int | None]:
         """Process a model response, dispatch tool calls, return tool results.
 
-        Returns (tool_results, segment) where tool_results is a list of
-        (tool_call_id, result_text) pairs and segment is the pinned segment
-        that the response and tool results should be recorded in.
+        Returns (tool_results, owning_task_id) where tool_results is a list
+        of (tool_call_id, result_text) pairs and owning_task_id is the task
+        that was active at the start of this response (used to tag the
+        response and any subsequent tool-results LogItems).
         """
-        conv_model = self.conversation_log.model
-        segment = current_segment(conv_model)
+        # Picks set by the previous response were used to compose the
+        # request we're handling now — consume them.
+        self.conversation_log.send(ConsumePicks())
+
+        owning_task_id = current_owning_task_id(self.conversation_log.model)
 
         tool_results: list[tuple[str, str]] = []
 
-        # Pre-scan: end_step must appear at most once and be first
+        # Pre-scan: close_current_task must appear at most once and be first.
         tool_call_parts = [p for p in response.parts if isinstance(p, ToolCallPart)]
-        action_end_count = sum(1 for p in tool_call_parts if p.tool_name == "end_step")
-        reject_action_end = action_end_count > 1 or (
-            action_end_count == 1 and tool_call_parts[0].tool_name != "end_step"
+        close_count = sum(
+            1 for p in tool_call_parts if p.tool_name == "close_current_task"
+        )
+        reject_close = close_count > 1 or (
+            close_count == 1 and tool_call_parts[0].tool_name != "close_current_task"
         )
 
         for part in response.parts:
@@ -147,22 +158,22 @@ class Context:
             name = part.tool_name
             args = part.args_as_dict()
 
-            # Reject end_step if not first or duplicated
-            if reject_action_end and name == "end_step":
+            # Reject close_current_task if not first or duplicated.
+            if reject_close and name == "close_current_task":
                 tool_results.append(
                     (
                         part.tool_call_id,
-                        "end_step must appear exactly once and be the first "
-                        "tool call in a response. Do not call tools before it or "
-                        "call it multiple times.",
+                        "close_current_task must appear exactly once and be"
+                        " the first and only tool call in a response. Do"
+                        " not call other tools alongside it.",
                     )
                 )
                 continue
 
-            # Reject step tools that aren't currently exposed
+            # Reject task tools that aren't currently exposed.
             if (
                 name in ALL_CONVERSATION_LOG_TOOLS
-                and name not in self._currently_exposed_step_tools()
+                and name not in self._currently_exposed_task_tools()
             ):
                 tool_results.append(
                     (
@@ -172,13 +183,15 @@ class Context:
                 )
                 continue
 
-            # Protocol enforcement
-            error = check_protocol(self.conversation_log.model, name)
+            # Protocol enforcement.
+            error = check_protocol(
+                self.conversation_log.model, name, self._protocol_free_tool_names
+            )
             if error is not None:
                 tool_results.append((part.tool_call_id, error))
                 continue
 
-            # Dispatch to owning widget
+            # Dispatch to owning widget.
             owner = self._tool_owners.get(name)
             if owner is None:
                 tool_results.append((part.tool_call_id, f"Unknown tool: {name}"))
@@ -187,11 +200,7 @@ class Context:
             result = await owner.dispatch_llm(name, args, on_update=on_update)
             tool_results.append((part.tool_call_id, result))
 
-            # Track non-action-log tools for protocol enforcement
-            if owner is not self.conversation_log:
-                self.conversation_log.send(ToolTracked(tool_name=name))
-
-        # Record token usage
+        # Record token usage.
         if self.token_usage is not None:
             usage = response.usage
             self.token_usage.send(
@@ -203,10 +212,12 @@ class Context:
                 )
             )
 
-        # Record the response in the pinned segment
-        self.conversation_log.send(ResponseReceived(response=response, segment=segment))
+        # Record the response in the log, tagged with the owning task.
+        self.conversation_log.send(
+            ResponseReceived(response=response, owning_task_id=owning_task_id)
+        )
 
-        return tool_results, segment
+        return tool_results, owning_task_id
 
     async def handle_widget_event(
         self,
@@ -216,8 +227,8 @@ class Context:
     ) -> str | None:
         """Handle a frontend-initiated widget event.
 
-        Bypasses the action log protocol. Returns the update result,
-        or None if the tool is unknown or not frontend-callable.
+        Bypasses the task protocol. Returns the update result, or None if
+        the tool is unknown or not frontend-callable.
         """
         owner = self._tool_owners.get(tool_name)
         if owner is None:

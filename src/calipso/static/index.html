@@ -186,9 +186,123 @@
             font-size: 0.85rem;
         }
 
-        /* Task styles */
-        .task-done label { text-decoration: line-through; color: #999; }
-        .task-in_progress label { color: #b45309; }
+        /* Task panel (inline, above the chronological conversation) */
+        .task-panel {
+            margin-bottom: 0.75rem;
+            padding: 0.5rem;
+            background: #f9fafb;
+            border-radius: 6px;
+            border: 1px solid #e5e7eb;
+        }
+        .task-panel .task-add {
+            margin-bottom: 0.5rem;
+        }
+        .task-panel .task-input {
+            width: 100%;
+            padding: 0.35rem 0.6rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 0.85rem;
+        }
+        .task-panel .open-tasks {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        .task-panel .open-tasks li {
+            padding: 0.3rem 0;
+            border-top: 1px solid #eee;
+            font-size: 0.9rem;
+        }
+        .task-panel .open-tasks li:first-child { border-top: none; }
+        .task-pending .task-icon { color: #666; }
+        .task-in_progress { background: #fef7e6; border-left: 3px solid #b45309; padding-left: 0.35rem; }
+        .task-in_progress .task-icon { color: #b45309; }
+        .task-row-head { display: flex; align-items: center; flex-wrap: wrap; gap: 0.3rem; }
+        .task-row-head .task-id { color: #9ca3af; font-size: 0.8rem; }
+        .task-controls { margin-left: auto; display: flex; gap: 0.25rem; }
+        .task-controls button {
+            padding: 0.15rem 0.5rem;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            background: #fff;
+            cursor: pointer;
+            font-size: 0.75rem;
+        }
+        .task-controls button:hover:not(:disabled) { background: #f0f0f0; }
+        .task-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .task-controls .btn-start { background: #2563eb; color: #fff; border-color: #2563eb; }
+        .task-controls .btn-start:hover { background: #1d4ed8; }
+        .task-controls .btn-close { background: #16a34a; color: #fff; border-color: #16a34a; }
+        .task-controls .btn-close:hover:not(:disabled) { background: #15803d; }
+
+        /* Memory block (in-progress banner + done details body) */
+        .memory-block {
+            margin-top: 0.35rem;
+            padding: 0.35rem 0.5rem;
+            background: #fff;
+            border-radius: 4px;
+            border: 1px dashed #d1d5db;
+        }
+        .memory-block .memories {
+            list-style: none;
+            padding: 0;
+            margin: 0 0 0.35rem 0;
+        }
+        .memory-block .memory-item {
+            display: flex;
+            gap: 0.3rem;
+            align-items: center;
+            padding: 0.15rem 0;
+        }
+        .memory-block .memory-input {
+            flex: 1;
+            padding: 0.25rem 0.4rem;
+            border: 1px solid #e5e7eb;
+            border-radius: 3px;
+            font-size: 0.82rem;
+            background: #fafafa;
+        }
+        .memory-block .memory-input:focus { background: #fff; border-color: #93c5fd; }
+        .memory-block .memory-add {
+            width: 100%;
+            padding: 0.25rem 0.4rem;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            font-size: 0.82rem;
+        }
+
+        /* Pick marker (🔍 next to tasks the LLM has asked to expand next request) */
+        .pick-marker { font-size: 0.9rem; }
+
+        /* In-progress banner and done-task collapsed block in the chat stream */
+        .in-progress-banner {
+            margin: 0.75rem 0 0.25rem 0;
+            padding: 0.3rem 0.5rem;
+            background: #fef7e6;
+            border-left: 3px solid #b45309;
+            font-size: 0.85rem;
+            color: #7c3a07;
+            font-weight: 500;
+        }
+        .task-done {
+            margin: 0.75rem 0;
+            border: 1px solid #e5e7eb;
+            border-radius: 4px;
+            background: #fafafa;
+        }
+        .task-done > summary {
+            cursor: pointer;
+            padding: 0.4rem 0.6rem;
+            font-size: 0.85rem;
+            color: #555;
+            user-select: none;
+        }
+        .task-done > summary:hover { background: #f0f0f0; }
+        .task-done .done-body {
+            padding: 0.4rem 0.6rem;
+            border-top: 1px solid #e5e7eb;
+        }
 
         /* Turn styles */
         .turn { padding: 0.3rem 0; }
@@ -372,7 +486,6 @@
         <button data-panel="widget-system-prompt" title="System Prompt">&#9881;<span class="badge"></span></button>
         <button data-panel="widget-agents-md" title="Agents">&#128196;<span class="badge"></span></button>
         <button data-panel="widget-goal" title="Goal">&#127919;<span class="badge"></span></button>
-        <button data-panel="widget-task-list" title="Tasks">&#9745;<span class="badge"></span></button>
         <button data-panel="widget-file-explorer" title="Files">&#128193;<span class="badge"></span></button>
         <button data-panel="widget-code-explorer" title="Code">&#128270;<span class="badge"></span></button>
         <button data-panel="widget-test-suite" title="Tests">&#9889;<span class="badge"></span></button>
@@ -387,9 +500,6 @@
         </div>
         <div class="panel-widget" data-for="widget-goal">
             <div id="widget-goal" class="widget"><h3>Goal</h3></div>
-        </div>
-        <div class="panel-widget" data-for="widget-task-list">
-            <div id="widget-task-list" class="widget"><h3>Tasks</h3></div>
         </div>
         <div class="panel-widget" data-for="widget-file-explorer">
             <div id="widget-file-explorer" class="widget"><h3>File Explorer</h3><p><em>No file open</em></p></div>

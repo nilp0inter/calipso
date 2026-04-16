@@ -95,6 +95,7 @@ class WidgetHandle:
     _from_llm_fn: Callable[[Any, str, dict], Any] = field(repr=False)
     _from_ui_fn: Callable[[Any, str, dict], Any | None] = field(repr=False)
     _frontend_tool_names: frozenset[str] = field(repr=False)
+    _protocol_free_tool_names: frozenset[str] = field(repr=False)
 
     # -- Public model access ------------------------------------------------
 
@@ -122,6 +123,15 @@ class WidgetHandle:
 
     def frontend_tools(self) -> frozenset[str]:
         return self._frontend_tool_names
+
+    def protocol_free_tools(self) -> frozenset[str]:
+        """Tool names this widget declares as callable outside the task protocol.
+
+        These tools are allowed even when no task is in_progress. Used by
+        Context.check_protocol to exempt e.g. goal management from the
+        "must be inside a task" rule.
+        """
+        return self._protocol_free_tool_names
 
     # -- Dispatch methods ---------------------------------------------------
 
@@ -223,6 +233,7 @@ def create_widget(
     from_llm: Callable[[Any, str, dict], Any] = _no_llm,
     from_ui: Callable[[Any, str, dict], Any | None] = _no_ui,
     frontend_tools: frozenset[str] = frozenset(),
+    protocol_free_tools: frozenset[str] = frozenset(),
 ) -> WidgetHandle:
     """Create a WidgetHandle from an initial model and function table."""
     return WidgetHandle(
@@ -235,4 +246,5 @@ def create_widget(
         _from_llm_fn=from_llm,
         _from_ui_fn=from_ui,
         _frontend_tool_names=frontend_tools,
+        _protocol_free_tool_names=protocol_free_tools,
     )

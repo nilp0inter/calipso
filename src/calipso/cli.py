@@ -17,7 +17,6 @@ from calipso.widgets import (
     create_file_explorer,
     create_goal,
     create_system_prompt,
-    create_task_list,
     create_test_suite,
     create_token_usage,
 )
@@ -83,7 +82,6 @@ async def async_main():
         children=[
             create_agents_md(),
             create_goal(),
-            create_task_list(),
             create_code_explorer(),
             create_file_explorer(),
             create_test_suite(),

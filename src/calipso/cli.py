@@ -12,7 +12,6 @@ from calipso.server import DashboardServer
 from calipso.widgets import (
     Context,
     create_agents_md,
-    create_code_explorer,
     create_conversation_log,
     create_file_explorer,
     create_goal,
@@ -82,7 +81,6 @@ async def async_main():
         children=[
             create_agents_md(),
             create_goal(),
-            create_code_explorer(),
             create_file_explorer(),
             create_test_suite(),
         ],

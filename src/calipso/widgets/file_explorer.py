@@ -1,4 +1,4 @@
-"""FileExplorer widget — filesystem navigation and non-Python file reading."""
+"""FileExplorer widget — filesystem navigation and file reading."""
 
 import html as html_mod
 from collections.abc import Iterator
@@ -15,10 +15,15 @@ from calipso.widget import WidgetHandle, create_widget
 
 
 @dataclass(frozen=True)
+class OpenDirectory:
+    path: str
+    entries: tuple[tuple[str, bool], ...]
+    listing_text: str
+
+
+@dataclass(frozen=True)
 class FileExplorerModel:
-    listing_path: str | None = None
-    listing_entries: tuple[tuple[str, bool], ...] | None = None
-    listing_text: str | None = None
+    open_directories: tuple[OpenDirectory, ...] = ()
     open_files: tuple[tuple[str, str], ...] = ()
 
 
@@ -26,14 +31,14 @@ class FileExplorerModel:
 
 
 @dataclass(frozen=True)
-class DirectoryListed:
+class DirectoryOpened:
     path: str
     entries: tuple[tuple[str, bool], ...]
     listing_text: str
 
 
 @dataclass(frozen=True)
-class DirectoryListError:
+class DirectoryOpenError:
     error: str
 
 
@@ -49,13 +54,19 @@ class FileReadError:
 
 
 @dataclass(frozen=True)
+class CloseDirectory:
+    path: str
+    initiator: Initiator
+
+
+@dataclass(frozen=True)
 class CloseReadFile:
     path: str
     initiator: Initiator
 
 
 @dataclass(frozen=True)
-class ListDirectoryRequested:
+class OpenDirectoryRequested:
     path: str
 
 
@@ -65,12 +76,13 @@ class ReadFileRequested:
 
 
 FileExplorerMsg = (
-    DirectoryListed
-    | DirectoryListError
+    DirectoryOpened
+    | DirectoryOpenError
     | FileRead
     | FileReadError
+    | CloseDirectory
     | CloseReadFile
-    | ListDirectoryRequested
+    | OpenDirectoryRequested
     | ReadFileRequested
 )
 
@@ -82,34 +94,29 @@ def update(
     model: FileExplorerModel, msg: FileExplorerMsg
 ) -> tuple[FileExplorerModel, Cmd]:
     match msg:
-        case ListDirectoryRequested(path=path):
+        case OpenDirectoryRequested(path=path):
 
             async def perform():
-                return _do_list_directory(path)
+                return _do_open_directory(path)
 
             return model, effect(perform=perform, to_msg=lambda msg: msg)
         case ReadFileRequested(path=path):
-            if path.endswith(".py"):
-                return model, tool_result(
-                    "Python files should be read with the Code Explorer's "
-                    "open_file tool, not read_file."
-                )
 
             async def perform():
                 return _do_read_file(path)
 
             return model, effect(perform=perform, to_msg=lambda msg: msg)
-        case DirectoryListed(path=path, entries=entries, listing_text=text):
+        case DirectoryOpened(path=path, entries=entries, listing_text=text):
+            existing = tuple(d for d in model.open_directories if d.path != path)
             return (
                 replace(
                     model,
-                    listing_path=path,
-                    listing_entries=entries,
-                    listing_text=text,
+                    open_directories=existing
+                    + (OpenDirectory(path=path, entries=entries, listing_text=text),),
                 ),
-                tool_result(f"Listed: {path}"),
+                tool_result(f"Opened directory: {path}"),
             )
-        case DirectoryListError(error=error):
+        case DirectoryOpenError(error=error):
             return model, tool_result(error)
         case FileRead(path=path, content=content):
             existing = tuple((p, c) for p, c in model.open_files if p != path)
@@ -122,6 +129,18 @@ def update(
             )
         case FileReadError(error=error):
             return model, tool_result(error)
+        case CloseDirectory(path=path, initiator=init):
+            if not any(d.path == path for d in model.open_directories):
+                return model, for_initiator(init, "No directory is open.")
+            return (
+                replace(
+                    model,
+                    open_directories=tuple(
+                        d for d in model.open_directories if d.path != path
+                    ),
+                ),
+                for_initiator(init, f"Closed directory: {path}"),
+            )
         case CloseReadFile(path=path, initiator=init):
             if not any(p == path for p, _ in model.open_files):
                 return model, for_initiator(init, "No file is open.")
@@ -138,28 +157,41 @@ def update(
 
 _TOOL_DEFS = [
     ToolDefinition(
-        name="list_directory",
+        name="open_directory",
         description=(
-            "List files and subdirectories at a given path. "
-            "Directories are marked with a trailing /."
+            "Open a directory in the File Explorer, listing its files and "
+            "subdirectories. Directories are marked with a trailing /. "
+            "The listing persists until closed with close_directory. "
+            "Re-opening the same path refreshes the listing."
         ),
         parameters_json_schema={
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Directory path to list. Defaults to '.'.",
+                    "description": "Directory path to open. Defaults to '.'.",
                     "default": ".",
                 },
             },
         },
     ),
     ToolDefinition(
+        name="close_directory",
+        description="Close an open directory in the File Explorer.",
+        parameters_json_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path of the directory to close.",
+                },
+            },
+            "required": ["path"],
+        },
+    ),
+    ToolDefinition(
         name="read_file",
-        description=(
-            "Read a non-Python file's contents. "
-            "For Python files, use open_file from the Code Explorer instead."
-        ),
+        description="Read a file's contents.",
         parameters_json_schema={
             "type": "object",
             "properties": {
@@ -190,17 +222,17 @@ _TOOL_DEFS = [
 
 def view_messages(model: FileExplorerModel) -> Iterator[ModelMessage]:
     lines = ["## File Explorer"]
-    if model.listing_text is not None:
+    for directory in model.open_directories:
         lines.append("")
-        lines.append(model.listing_text)
+        lines.append(directory.listing_text)
     for path, content in model.open_files:
         lines.append("")
         lines.append(f"**Open file:** `{path}`")
         lines.append("```")
         lines.append(content)
         lines.append("```")
-    if model.listing_text is None and not model.open_files:
-        lines.append("No file open.")
+    if not model.open_directories and not model.open_files:
+        lines.append("No directory or file open.")
     yield ModelRequest(parts=[UserPromptPart(content="\n".join(lines))])
 
 
@@ -212,22 +244,34 @@ def view_html(model: FileExplorerModel) -> str:
     parts = []
 
     root_btn = (
-        "<button onclick=\"sendWidgetEvent('list_directory', {path: '.'})\""
+        "<button onclick=\"sendWidgetEvent('open_directory', {path: '.'})\""
         ' class="btn-root">Root</button>'
     )
     parts.append(root_btn)
 
-    if model.listing_entries is not None:
-        listing_path = model.listing_path or "."
+    for directory in model.open_directories:
+        escaped_dir_path = html_mod.escape(directory.path, quote=True)
+        close_btn = (
+            "<button onclick=\"sendWidgetEvent('close_directory',"
+            f" {{path: '{escaped_dir_path}'}})\""
+            ' class="btn-remove" title="Close directory">'
+            "&times;</button>"
+        )
+        header = html_mod.escape(directory.path)
+        parts.append(
+            f'<div class="file-entry" title="{escaped_dir_path}">'
+            f"<code>{header}</code>"
+            f"{close_btn}</div>"
+        )
         items = []
-        for name, is_dir in model.listing_entries:
+        for name, is_dir in directory.entries:
             escaped_name = html_mod.escape(name)
-            child_path = f"{listing_path}/{name}"
+            child_path = f"{directory.path}/{name}"
             escaped_path = html_mod.escape(child_path, quote=True)
             if is_dir:
                 items.append(
                     f'<li class="entry-dir" ondblclick="'
-                    f"sendWidgetEvent('list_directory', "
+                    f"sendWidgetEvent('open_directory', "
                     f"{{path: '{escaped_path}'}})"
                     f'" style="cursor:pointer">'
                     f"{escaped_name}/</li>"
@@ -240,11 +284,7 @@ def view_html(model: FileExplorerModel) -> str:
                     f'" style="cursor:pointer">'
                     f"{escaped_name}</li>"
                 )
-        header = html_mod.escape(listing_path)
-        parts.append(
-            f"<p><strong>{header}</strong></p>"
-            f'<ul class="dir-listing">{"".join(items)}</ul>'
-        )
+        parts.append(f'<ul class="dir-listing">{"".join(items)}</ul>')
 
     for file_path, file_content in model.open_files:
         filename = Path(file_path).name
@@ -276,8 +316,10 @@ def view_html(model: FileExplorerModel) -> str:
 
 def from_llm(model: FileExplorerModel, tool_name: str, args: dict) -> FileExplorerMsg:
     match tool_name:
-        case "list_directory":
-            return ListDirectoryRequested(path=args.get("path", "."))
+        case "open_directory":
+            return OpenDirectoryRequested(path=args.get("path", "."))
+        case "close_directory":
+            return CloseDirectory(path=args["path"], initiator=Initiator.LLM)
         case "read_file":
             return ReadFileRequested(path=args["path"])
         case "close_read_file":
@@ -289,8 +331,10 @@ def from_ui(
     model: FileExplorerModel, event_name: str, args: dict
 ) -> FileExplorerMsg | None:
     match event_name:
-        case "list_directory":
-            return ListDirectoryRequested(path=args.get("path", "."))
+        case "open_directory":
+            return OpenDirectoryRequested(path=args.get("path", "."))
+        case "close_directory":
+            return CloseDirectory(path=args["path"], initiator=Initiator.UI)
         case "read_file":
             return ReadFileRequested(path=args["path"])
         case "close_read_file":
@@ -301,10 +345,10 @@ def from_ui(
 # --- I/O helpers ---
 
 
-def _do_list_directory(path: str) -> FileExplorerMsg:
+def _do_open_directory(path: str) -> FileExplorerMsg:
     p = Path(path)
     if not p.is_dir():
-        return DirectoryListError(error=f"Not a directory: {path}")
+        return DirectoryOpenError(error=f"Not a directory: {path}")
     entries_raw = sorted(p.iterdir(), key=lambda e: (not e.is_dir(), e.name))
     entries = tuple((e.name, e.is_dir()) for e in entries_raw)
     lines = [f"Contents of `{path}`:", ""]
@@ -314,7 +358,7 @@ def _do_list_directory(path: str) -> FileExplorerMsg:
     if not entries_raw:
         lines.append("(empty directory)")
     listing_text = "\n".join(lines)
-    return DirectoryListed(path=path, entries=entries, listing_text=listing_text)
+    return DirectoryOpened(path=path, entries=entries, listing_text=listing_text)
 
 
 def _do_read_file(path: str) -> FileExplorerMsg:
@@ -341,5 +385,7 @@ def create_file_explorer() -> WidgetHandle:
         view_html=view_html,
         from_llm=from_llm,
         from_ui=from_ui,
-        frontend_tools=frozenset({"list_directory", "read_file", "close_read_file"}),
+        frontend_tools=frozenset(
+            {"open_directory", "close_directory", "read_file", "close_read_file"}
+        ),
     )

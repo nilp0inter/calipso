@@ -6,7 +6,7 @@ Built on [Pydantic AI](https://ai.pydantic.dev/)'s `Model` layer for provider-ag
 
 ## Current status
 
-The agent has a CLI entry point, a runner (agentic loop), and eight widgets: `SystemPrompt`, `AgentsMd`, `Goal`, `ConversationLog` (manages tasks *and* conversation history together), `CodeExplorer`, `FileExplorer`, `TestSuite`, and `TokenUsage`. The widget architecture is functional and tested. The `CodeExplorer` widget provides tree-sitter-based code reading with LLM-powered summarization — the agent sees signatures and descriptions, never raw code. The `ConversationLog` enforces a **task protocol**: every non-task, non-goal tool call must happen while a task is `in_progress`, and when the LLM closes a task, the full span collapses to the task's LLM-authored memory list (reclaiming prompt budget while keeping the durable findings).
+The agent has a CLI entry point, a runner (agentic loop), and seven widgets wired into the default tree: `SystemPrompt`, `AgentsMd`, `Goal`, `ConversationLog` (manages tasks *and* conversation history together), `FileExplorer`, `TestSuite`, and `TokenUsage`. A `CodeExplorer` widget (tree-sitter-based code reading with LLM-powered summarization) is implemented in the codebase but currently not wired into the default tree. The widget architecture is functional and tested. The `ConversationLog` enforces a **task protocol**: every non-task, non-goal tool call must happen while a task is `in_progress`, and when the LLM closes a task, the full span collapses to the task's LLM-authored memory list (reclaiming prompt budget while keeping the durable findings).
 
 ## Audience
 

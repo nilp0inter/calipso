@@ -140,22 +140,59 @@ class TestGoal:
 
 
 class TestFileExplorer:
-    async def test_list_directory(self, tmp_path: Path):
+    async def test_open_directory(self, tmp_path: Path):
         w = create_file_explorer()
         sub = tmp_path / "subdir"
         sub.mkdir()
         (tmp_path / "file.txt").write_text("hello")
-        result = await w.dispatch_llm("list_directory", {"path": str(tmp_path)})
-        assert result == f"Listed: {tmp_path}"
-        assert "subdir/" in w.model.listing_text
-        assert "file.txt" in w.model.listing_text
+        result = await w.dispatch_llm("open_directory", {"path": str(tmp_path)})
+        assert result == f"Opened directory: {tmp_path}"
+        assert len(w.model.open_directories) == 1
+        d = w.model.open_directories[0]
+        assert d.path == str(tmp_path)
+        assert "subdir/" in d.listing_text
+        assert "file.txt" in d.listing_text
 
-    async def test_list_directory_not_a_dir(self, tmp_path: Path):
+    async def test_open_directory_not_a_dir(self, tmp_path: Path):
         w = create_file_explorer()
         result = await w.dispatch_llm(
-            "list_directory", {"path": str(tmp_path / "nope")}
+            "open_directory", {"path": str(tmp_path / "nope")}
         )
         assert "Not a directory" in result
+        assert w.model.open_directories == ()
+
+    async def test_close_directory(self, tmp_path: Path):
+        w = create_file_explorer()
+        await w.dispatch_llm("open_directory", {"path": str(tmp_path)})
+        assert len(w.model.open_directories) == 1
+        result = await w.dispatch_llm("close_directory", {"path": str(tmp_path)})
+        assert "Closed directory" in result
+        assert w.model.open_directories == ()
+
+    async def test_close_directory_when_none_open(self):
+        w = create_file_explorer()
+        result = await w.dispatch_llm("close_directory", {"path": "nope"})
+        assert "No directory is open" in result
+
+    async def test_open_directory_refreshes_existing(self, tmp_path: Path):
+        w = create_file_explorer()
+        await w.dispatch_llm("open_directory", {"path": str(tmp_path)})
+        await w.dispatch_llm("open_directory", {"path": str(tmp_path)})
+        assert len(w.model.open_directories) == 1
+
+    async def test_multiple_open_directories(self, tmp_path: Path):
+        w = create_file_explorer()
+        a = tmp_path / "a"
+        b = tmp_path / "b"
+        a.mkdir()
+        b.mkdir()
+        await w.dispatch_llm("open_directory", {"path": str(a)})
+        await w.dispatch_llm("open_directory", {"path": str(b)})
+        assert len(w.model.open_directories) == 2
+        msgs = list(w.view_messages())
+        text = msgs[0].parts[0].content
+        assert str(a) in text
+        assert str(b) in text
 
     async def test_read_file(self, tmp_path: Path):
         w = create_file_explorer()
@@ -164,12 +201,6 @@ class TestFileExplorer:
         result = await w.dispatch_llm("read_file", {"path": str(f)})
         assert result == f"Opened: {f}"
         assert w.model.open_files == ((str(f), "# Hello"),)
-
-    async def test_read_file_rejects_python(self):
-        w = create_file_explorer()
-        result = await w.dispatch_llm("read_file", {"path": "foo.py"})
-        assert "Code Explorer" in result
-        assert w.model.open_files == ()
 
     async def test_read_file_not_found(self):
         w = create_file_explorer()
@@ -195,7 +226,7 @@ class TestFileExplorer:
         w = create_file_explorer()
         msgs = list(w.view_messages())
         assert len(msgs) == 1
-        assert "No file open" in msgs[0].parts[0].content
+        assert "No directory or file open" in msgs[0].parts[0].content
 
     def test_view_messages_with_file(self):
         from calipso.cmd import CmdToolResult
@@ -237,12 +268,17 @@ class TestFileExplorer:
         w = create_file_explorer()
         tools = list(w.view_tools())
         names = {t.name for t in tools}
-        assert names == {"list_directory", "read_file", "close_read_file"}
+        assert names == {
+            "open_directory",
+            "close_directory",
+            "read_file",
+            "close_read_file",
+        }
 
     def test_frontend_tools(self):
         w = create_file_explorer()
         assert w.frontend_tools() == frozenset(
-            {"list_directory", "read_file", "close_read_file"}
+            {"open_directory", "close_directory", "read_file", "close_read_file"}
         )
 
 

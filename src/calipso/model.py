@@ -34,4 +34,4 @@ def create_model(http_client: httpx.AsyncClient | None = None) -> Model:
         api_key=os.environ.get("OPENROUTER_API_KEY"),
         http_client=http_client,
     )
-    return OpenAIChatModel("x-ai/grok-4-fast", provider=provider)
+    return OpenAIChatModel("x-ai/grok-4.1-fast", provider=provider)

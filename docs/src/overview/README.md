@@ -23,7 +23,6 @@ flowchart TB
     Context -- "2. conversation_log\n(tasks + history)" --> CL["ConversationLog"]
     Context -- "3. children (state panels)" --> AgentsMd["AgentsMd"]
     Context -- "3. children (state panels)" --> Goal["Goal"]
-    Context -- "3. children (state panels)" --> CE["CodeExplorer"]
     Context -- "3. children (state panels)" --> FE["FileExplorer"]
     Context -- "3. children (state panels)" --> TS["TestSuite"]
     Context -- "4. token_usage" --> TU["TokenUsage"]
@@ -61,7 +60,7 @@ All widget HTML output is rendered through a shared `render_md()` function that 
 
 ## Current state
 
-The agent has eight widgets: `SystemPrompt` (static identity/framing text), `AgentsMd` (behavioral instructions loaded from `AGENTS.md`), `Goal` (directional — set/clear, editable from browser; its tools are declared *protocol-free* so they remain callable with no active task), `ConversationLog` (tasks + conversation history in one widget — enforces the task protocol, owns the chronological log of user messages / LLM responses / tool results, each tagged with the task that owned them; done-task spans collapse to a memory-only block for the LLM), `CodeExplorer` (tree-sitter-based code reading — the agent opens files, runs S-expression queries, and sees only signatures plus LLM-generated summaries with `[...REDACTED...]` markers replacing code bodies), `FileExplorer` (directory listing and file reading for non-Python files), `TestSuite` (configurable test runner with subprocess tracking and cancellation), and `TokenUsage` (display-only bar chart of input/output tokens per LLM request).
+The default widget tree has seven widgets: `SystemPrompt` (static identity/framing text), `AgentsMd` (behavioral instructions loaded from `AGENTS.md`), `Goal` (directional — set/clear, editable from browser; its tools are declared *protocol-free* so they remain callable with no active task), `ConversationLog` (tasks + conversation history in one widget — enforces the task protocol, owns the chronological log of user messages / LLM responses / tool results, each tagged with the task that owned them; done-task spans collapse to a memory-only block for the LLM), `FileExplorer` (directory listing and file reading), `TestSuite` (configurable test runner with subprocess tracking and cancellation), and `TokenUsage` (display-only bar chart of input/output tokens per LLM request). A `CodeExplorer` widget (tree-sitter-based code reading with LLM-generated `[...REDACTED...]` body summaries) is available in the codebase but is currently not wired into the default tree.
 
 The Context renders in a specific order: system prompt first, then the `ConversationLog` (protocol rules + chronological log with done-task collapsing + open-tasks block), then state panels (wrapped in `CURRENT STATE` / `END STATE` markers as user messages) so the model sees live state right before generating its response.
 

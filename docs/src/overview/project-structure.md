@@ -15,8 +15,8 @@ calipso/
 │       ├── system_prompt.py  # Identity + workspace framing
 │       ├── agents_md.py      # Behavioral instructions from AGENTS.md
 │       ├── goal.py           # Goal widget (protocol-free tools)
-│       ├── code_explorer.py  # Tree-sitter code reading + summarization
-│       ├── file_explorer.py  # Filesystem navigation + non-Python file reading
+│       ├── code_explorer.py  # Tree-sitter code reading + summarization (not wired in default tree)
+│       ├── file_explorer.py  # Filesystem navigation + file reading
 │       ├── test_suite.py     # Test runner configuration + execution
 │       ├── token_usage.py    # Per-request token-usage bar chart
 │       ├── conversation_log.py # Tasks + conversation history (task protocol)

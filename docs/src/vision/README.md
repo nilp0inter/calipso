@@ -33,7 +33,7 @@ test_login_redirects - AssertionError: expected 302, got 200
 
 Updates are triggered by the runner after relevant tool calls, not by DSL commands.
 
-### Interactive: Code Explorer (implemented)
+### Interactive: Code Explorer (implemented; not wired in default tree)
 
 Opens files and parses them with tree-sitter. The agent navigates via raw tree-sitter S-expression queries (`open_file`, `close_file`, `query`, `query_all`). Query results pass through a pipeline that strips comments/docstrings and feeds the code to a cheap summarizer LLM, which preserves signatures verbatim and replaces bodies with `[...REDACTED...]` markers and descriptions.
 

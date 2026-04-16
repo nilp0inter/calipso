@@ -2,11 +2,9 @@
 
 from collections.abc import Awaitable, Callable
 
-from pydantic_ai.messages import ModelRequest, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import Model, ModelRequestParameters
 
 from calipso.widgets.context import Context
-from calipso.widgets.conversation_log import ToolResultsReceived
 
 
 async def run_turn(
@@ -35,9 +33,7 @@ async def run_turn(
 
         response = await model.request(messages, None, params)
 
-        tool_results, owning_task_id = await context.handle_response(
-            response, on_update=on_update
-        )
+        tool_results = await context.handle_response(response, on_update=on_update)
 
         if on_update:
             await on_update()
@@ -45,25 +41,3 @@ async def run_turn(
         if not tool_results:
             # No tool calls — the model produced a text response
             return response.text or ""
-
-        # Build tool return message and record it tagged with the owning task
-        tool_return_parts = [
-            ToolReturnPart(
-                tool_name=_find_tool_name(response, call_id),
-                content=result,
-                tool_call_id=call_id,
-            )
-            for call_id, result in tool_results
-        ]
-        tool_request = ModelRequest(parts=tool_return_parts)
-        context.conversation_log.send(
-            ToolResultsReceived(request=tool_request, owning_task_id=owning_task_id)
-        )
-
-
-def _find_tool_name(response, call_id: str) -> str:
-    """Find the tool name for a given call_id in the response."""
-    for part in response.parts:
-        if isinstance(part, ToolCallPart) and part.tool_call_id == call_id:
-            return part.tool_name
-    return "unknown"

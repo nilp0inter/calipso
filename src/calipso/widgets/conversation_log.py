@@ -752,10 +752,10 @@ def _yield_raw(group: list[LogItem]) -> Iterator[ModelMessage]:
 
 
 def view_html(model: ConversationLogModel) -> str:
-    parts = [_render_task_panel(model)]
-    parts.append('<div class="conversation-stream">')
+    parts = ['<div class="conversation-stream">']
     parts.extend(_render_log(model))
     parts.append("</div>")
+    parts.append(_render_task_panel(model))
     return (
         '<div id="widget-conversation-log" class="widget">'
         f"<h3>Conversation</h3>{''.join(parts)}</div>"
@@ -763,16 +763,18 @@ def view_html(model: ConversationLogModel) -> str:
 
 
 def _render_task_panel(model: ConversationLogModel) -> str:
-    """Create-task input + open tasks overview."""
-    open_tasks = [
+    """Create-task input + pending tasks overview.
+
+    Only PENDING tasks appear here — in-progress and done tasks are
+    rendered inline in the conversation stream.
+    """
+    pending_tasks = [
         model.tasks[tid]
         for tid in model.task_order
-        if model.tasks[tid].status in (TaskStatus.PENDING, TaskStatus.IN_PROGRESS)
+        if model.tasks[tid].status == TaskStatus.PENDING
     ]
-    rows = []
-    for task in open_tasks:
-        rows.append(_render_open_task_row(task, model))
-    rows_html = "".join(rows) if rows else "<li><em>No open tasks</em></li>"
+    rows = [_render_pending_task_row(task, model) for task in pending_tasks]
+    rows_html = "".join(rows) if rows else "<li><em>No pending tasks</em></li>"
     create_input = (
         '<div class="task-add">'
         '<input type="text" class="task-input"'
@@ -791,49 +793,30 @@ def _render_task_panel(model: ConversationLogModel) -> str:
     )
 
 
-def _render_open_task_row(task: Task, model: ConversationLogModel) -> str:
+def _render_pending_task_row(task: Task, model: ConversationLogModel) -> str:
     icon = html_mod.escape(_STATUS_ICONS[task.status])
     desc = html_mod.escape(task.description)
-    pick_marker = (
-        ' <span class="pick-marker"'
-        ' title="LLM will expand this task on next request">🔍</span>'
-        if task.id in model.picks_for_next_request
-        else ""
-    )
     controls: list[str] = []
-    if task.status == TaskStatus.PENDING:
-        if model.active_task_id is None:
-            controls.append(
-                '<button class="btn-start"'
-                f" onclick=\"sendWidgetEvent('start_task',{{task_id:{task.id}}})\""
-                ">Start</button>"
-            )
+    if model.active_task_id is None:
         controls.append(
-            '<button class="btn-remove"'
-            f" onclick=\"sendWidgetEvent('remove_task',{{task_id:{task.id}}})\""
-            ' title="Remove task">x</button>'
+            '<button class="btn-start"'
+            f" onclick=\"sendWidgetEvent('start_task',{{task_id:{task.id}}})\""
+            ">Start</button>"
         )
-    elif task.status == TaskStatus.IN_PROGRESS:
-        close_disabled = "" if task.memories else " disabled"
-        controls.append(
-            '<button class="btn-close"'
-            f"{close_disabled}"
-            " onclick=\"sendWidgetEvent('close_current_task',{})\""
-            ">Close task</button>"
-        )
+    controls.append(
+        '<button class="btn-remove"'
+        f" onclick=\"sendWidgetEvent('remove_task',{{task_id:{task.id}}})\""
+        ' title="Remove task">x</button>'
+    )
     controls_html = " ".join(controls)
-    memories_html = ""
-    if task.status == TaskStatus.IN_PROGRESS:
-        memories_html = _render_memory_block(task)
     return (
         f'<li class="task-{task.status.value}">'
         f'<span class="task-row-head">'
         f'<span class="task-icon">{icon}</span>'
         f' <span class="task-id">#{task.id}</span>'
-        f" {desc}{pick_marker}"
+        f" {desc}"
         f' <span class="task-controls">{controls_html}</span>'
         "</span>"
-        f"{memories_html}"
         "</li>"
     )
 
@@ -897,19 +880,36 @@ def _render_log(model: ConversationLogModel) -> list[str]:
             continue
 
         if task.status == TaskStatus.IN_PROGRESS:
-            out.append(
-                '<div class="in-progress-banner">'
-                f"Task #{task.id}: {html_mod.escape(task.description)}"
-                f" ({len(task.memories)} memor"
-                f"{'y' if len(task.memories) == 1 else 'ies'})"
-                "</div>"
-            )
+            out.append(_render_in_progress_block(task))
             out.extend(_render_group_raw(group))
             continue
 
         # DONE
         out.append(_render_done_task_block(task, group, model))
     return out
+
+
+def _render_in_progress_block(task: Task) -> str:
+    """Render the in-progress task banner, memories, and close button."""
+    desc = html_mod.escape(task.description)
+    mem_count = len(task.memories)
+    mem_noun = "memory" if mem_count == 1 else "memories"
+    close_disabled = "" if task.memories else " disabled"
+    close_btn = (
+        '<button class="btn-close"'
+        f"{close_disabled}"
+        " onclick=\"sendWidgetEvent('close_current_task',{})\""
+        ">Close task</button>"
+    )
+    banner = (
+        '<div class="in-progress-banner">'
+        '<span class="task-row-head">'
+        f"Task #{task.id}: {desc} ({mem_count} {mem_noun})"
+        f' <span class="task-controls">{close_btn}</span>'
+        "</span>"
+        "</div>"
+    )
+    return banner + _render_memory_block(task)
 
 
 def _render_done_task_block(
@@ -951,9 +951,11 @@ def _render_done_task_block(
 def _render_group_raw(group: list[LogItem]) -> list[str]:
     out: list[str] = []
     pending_tools: list[str] = []
+    pending_calls = 0
     for item in group:
         if item.user_message is not None:
-            out.extend(_flush_tools(pending_tools))
+            out.extend(_flush_tools(pending_tools, pending_calls))
+            pending_calls = 0
             out.append(
                 '<div class="msg sent">'
                 '<span class="bubble-label">You</span>'
@@ -962,23 +964,26 @@ def _render_group_raw(group: list[LogItem]) -> list[str]:
             )
         elif item.response is not None:
             text_parts, tool_parts = _split_response(item.response)
-            out.extend(_flush_tools(pending_tools))
+            out.extend(_flush_tools(pending_tools, pending_calls))
+            pending_calls = 0
             out.extend(text_parts)
             pending_tools.extend(tool_parts)
+            pending_calls += len(tool_parts)
         elif item.tool_results is not None:
             pending_tools.extend(_render_tool_returns(item.tool_results))
-    out.extend(_flush_tools(pending_tools))
+    out.extend(_flush_tools(pending_tools, pending_calls))
     return out
 
 
-def _flush_tools(pending: list[str]) -> list[str]:
+def _flush_tools(pending: list[str], call_count: int) -> list[str]:
     if not pending:
         return []
+    noun = "call" if call_count == 1 else "calls"
     out = [
-        '<div class="tool-group">'
-        f'<span class="tool-group-label">{len(pending)} tool calls/results</span>'
+        '<details class="tool-group">'
+        f"<summary>{call_count} tool {noun}</summary>"
         f"{''.join(pending)}"
-        "</div>"
+        "</details>"
     ]
     pending.clear()
     return out

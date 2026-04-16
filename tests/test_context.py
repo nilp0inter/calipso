@@ -137,7 +137,7 @@ class TestContextDispatch:
             conversation_log=create_conversation_log(),
         )
         ctx.add_user_message("start")
-        results, _ = await ctx.handle_response(
+        results = await ctx.handle_response(
             ModelResponse(parts=[_tc("create_task", {"description": "Plan"}, "c0")])
         )
         assert "Created task 1" in results[0][1]
@@ -151,7 +151,7 @@ class TestContextDispatch:
             conversation_log=create_conversation_log(),
         )
         ctx.add_user_message("test")
-        results, _ = await ctx.handle_response(
+        results = await ctx.handle_response(
             ModelResponse(parts=[_tc("set_goal", {"goal": "Ship it"}, "c1")])
         )
         assert "Ship it" in results[0][1]
@@ -166,7 +166,7 @@ class TestContextDispatch:
             conversation_log=create_conversation_log(),
         )
         ctx.add_user_message("test")
-        results, _ = await ctx.handle_response(
+        results = await ctx.handle_response(
             ModelResponse(parts=[_tc("some_random_tool", {}, "c1")])
         )
         assert "outside a task" in results[0][1]
@@ -181,7 +181,7 @@ class TestContextDispatch:
         ctx.add_user_message("set goal")
         await _create_and_start(ctx, "do it")
         response = ModelResponse(parts=[_tc("set_goal", {"goal": "Ship it"}, "c2")])
-        results, _ = await ctx.handle_response(response)
+        results = await ctx.handle_response(response)
         assert "Ship it" in results[0][1]
         assert goal.model.text == "Ship it"
 
@@ -194,7 +194,7 @@ class TestContextDispatch:
         ctx.add_user_message("test")
         await _create_and_start(ctx)
         response = ModelResponse(parts=[_tc("nonexistent", {}, "c2")])
-        results, _ = await ctx.handle_response(response)
+        results = await ctx.handle_response(response)
         assert "Unknown" in results[0][1]
 
     async def test_start_task_rejected_when_another_active(self):
@@ -217,7 +217,7 @@ class TestContextDispatch:
         )
         assert ctx.conversation_log.model.active_task_id == 1
         # Attempt to start task 2 while 1 is active
-        results, _ = await ctx.handle_response(
+        results = await ctx.handle_response(
             ModelResponse(parts=[_tc("start_task", {"task_id": 2}, "c2")])
         )
         assert "Unknown tool" in results[0][1]
@@ -235,7 +235,7 @@ class TestContextDispatch:
         # view_tools gates close_current_task behind memories ≥ 1, so the
         # LLM would normally not be offered it — but if it tries, the pre-scan
         # (not-in-exposed) path returns "Unknown tool".
-        results, _ = await ctx.handle_response(
+        results = await ctx.handle_response(
             ModelResponse(parts=[_tc("close_current_task", {}, "c2")])
         )
         assert "Unknown" in results[0][1]
@@ -253,7 +253,7 @@ class TestContextDispatch:
         await ctx.handle_response(
             ModelResponse(parts=[_tc("task_memory", {"text": "note A"}, "c2")])
         )
-        results, _ = await ctx.handle_response(
+        results = await ctx.handle_response(
             ModelResponse(parts=[_tc("close_current_task", {}, "c3")])
         )
         assert "Closed task" in results[0][1]
@@ -274,7 +274,7 @@ class TestContextDispatch:
             ModelResponse(parts=[_tc("task_memory", {"text": "note"}, "c2")])
         )
         # close_current_task with another tool call (not first).
-        results, _ = await ctx.handle_response(
+        results = await ctx.handle_response(
             ModelResponse(
                 parts=[
                     _tc("set_goal", {"goal": "Win"}, "c3"),
@@ -297,7 +297,7 @@ class TestContextDispatch:
         await ctx.handle_response(
             ModelResponse(parts=[_tc("task_memory", {"text": "n"}, "c2")])
         )
-        results, _ = await ctx.handle_response(
+        results = await ctx.handle_response(
             ModelResponse(
                 parts=[
                     _tc("close_current_task", {}, "c3"),
@@ -336,12 +336,57 @@ class TestContextDispatch:
         )
         ctx.add_user_message("Hello")
         response = ModelResponse(parts=[TextPart(content="Hi back!")])
-        results, _ = await ctx.handle_response(response)
+        results = await ctx.handle_response(response)
         assert results == []  # no tool calls
         log = ctx.conversation_log.model.log
         # user message + response recorded
         assert any(item.user_message == "Hello" for item in log)
         assert any(item.response is response for item in log)
+
+    async def test_start_task_pivot_splits_owning_task_id(self):
+        """A response that mixes start_task(x) with other tool calls is
+        split at the pivot: start_task is tagged with the pre-start task
+        (None here), and the tools that follow are tagged with x."""
+        goal = create_goal()
+        ctx = Context(
+            system_prompt=create_system_prompt(),
+            children=[goal],
+            conversation_log=create_conversation_log(),
+        )
+        ctx.add_user_message("go")
+        await ctx.handle_response(
+            ModelResponse(parts=[_tc("create_task", {"description": "X"}, "c0")])
+        )
+        await ctx.handle_response(
+            ModelResponse(
+                parts=[
+                    _tc("start_task", {"task_id": 1}, "c1"),
+                    _tc("set_goal", {"goal": "Ship"}, "c2"),
+                ]
+            )
+        )
+        assert ctx.conversation_log.model.active_task_id == 1
+        assert goal.model.text == "Ship"
+
+        # The split: start_task's response + return go with owning_task_id=None,
+        # set_goal's response + return go with owning_task_id=1.
+        log = ctx.conversation_log.model.log
+        # Find the two responses recorded for the second handle_response call.
+        responses = [i for i in log if i.response is not None]
+        # First response: the isolated create_task (tid=None).
+        # Second response: just start_task (tid=None).
+        # Third response: just set_goal (tid=1).
+        assert len(responses) == 3
+        assert responses[1].owning_task_id is None
+        assert [p.tool_name for p in responses[1].response.parts] == ["start_task"]
+        assert responses[2].owning_task_id == 1
+        assert [p.tool_name for p in responses[2].response.parts] == ["set_goal"]
+
+        # Tool returns are split the same way.
+        returns = [i for i in log if i.tool_results is not None]
+        assert len(returns) == 3
+        assert returns[1].owning_task_id is None
+        assert returns[2].owning_task_id == 1
 
     async def test_picks_consumed_at_handle_response_start(self):
         """Picks set in one response are consumed at the start of the next

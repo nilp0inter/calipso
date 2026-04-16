@@ -1,13 +1,14 @@
 """Context widget — root composition of all widgets into the model's context."""
 
 from collections.abc import Awaitable, Callable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.tools import ToolDefinition
@@ -17,6 +18,7 @@ from calipso.widgets.conversation_log import (
     ALL_CONVERSATION_LOG_TOOLS,
     ConsumePicks,
     ResponseReceived,
+    ToolResultsReceived,
     UserMessageReceived,
     check_protocol,
     current_owning_task_id,
@@ -126,21 +128,22 @@ class Context:
         self,
         response: ModelResponse,
         on_update: Callable[[], Awaitable[None]] | None = None,
-    ) -> tuple[list[tuple[str, str]], int | None]:
-        """Process a model response, dispatch tool calls, return tool results.
+    ) -> list[tuple[str, str]]:
+        """Process a model response, dispatch tool calls, record the
+        response and any tool results in the conversation log.
 
-        Returns (tool_results, owning_task_id) where tool_results is a list
-        of (tool_call_id, result_text) pairs and owning_task_id is the task
-        that was active at the start of this response (used to tag the
-        response and any subsequent tool-results LogItems).
+        The owning task id is captured **per tool call** — just before
+        dispatch — so a response that mixes ``start_task(x)`` with other
+        tools is split at the pivot: ``start_task`` itself is tagged
+        with the pre-start task id (``None`` or the outer task), while
+        any tools that follow are tagged with the newly-started task.
+
+        Returns the list of ``(tool_call_id, result_text)`` pairs for
+        use by the runner (which decides whether to loop).
         """
         # Picks set by the previous response were used to compose the
         # request we're handling now — consume them.
         self.conversation_log.send(ConsumePicks())
-
-        owning_task_id = current_owning_task_id(self.conversation_log.model)
-
-        tool_results: list[tuple[str, str]] = []
 
         # Pre-scan: close_current_task must appear at most once and be first.
         tool_call_parts = [p for p in response.parts if isinstance(p, ToolCallPart)]
@@ -151,12 +154,19 @@ class Context:
             close_count == 1 and tool_call_parts[0].tool_name != "close_current_task"
         )
 
+        tool_results: list[tuple[str, str]] = []
+        # owning_task_id captured immediately *before* each tool call's
+        # dispatch, so successful start_task transitions form a pivot.
+        per_call_tids: list[int | None] = []
+
         for part in response.parts:
             if not isinstance(part, ToolCallPart):
                 continue
 
             name = part.tool_name
             args = part.args_as_dict()
+
+            per_call_tids.append(current_owning_task_id(self.conversation_log.model))
 
             # Reject close_current_task if not first or duplicated.
             if reject_close and name == "close_current_task":
@@ -212,12 +222,78 @@ class Context:
                 )
             )
 
-        # Record the response in the log, tagged with the owning task.
-        self.conversation_log.send(
-            ResponseReceived(response=response, owning_task_id=owning_task_id)
-        )
+        # Record response + tool_results, split by owning task id.
+        self._record_log_items(response, tool_results, per_call_tids)
 
-        return tool_results, owning_task_id
+        return tool_results
+
+    def _record_log_items(
+        self,
+        response: ModelResponse,
+        tool_results: list[tuple[str, str]],
+        per_call_tids: list[int | None],
+    ) -> None:
+        """Split the response and its tool returns by owning task id and
+        send interleaved (ResponseReceived, ToolResultsReceived) pairs
+        so items with the same task id remain adjacent in the log.
+
+        When there is a single group (no task pivot) the original
+        ``response`` object is preserved — callers and tests rely on
+        identity of the logged response.
+        """
+        result_by_id = dict(tool_results)
+
+        # Walk parts in order, building per-owner groups.
+        groups: list[tuple[list, list[ToolReturnPart], int | None]] = []
+        current_parts: list = []
+        current_returns: list[ToolReturnPart] = []
+        current_tid: int | None = current_owning_task_id(self.conversation_log.model)
+        has_tid = False
+        call_idx = 0
+
+        for part in response.parts:
+            if isinstance(part, ToolCallPart):
+                tid = per_call_tids[call_idx]
+                call_idx += 1
+                if not has_tid:
+                    current_tid = tid
+                    has_tid = True
+                elif tid != current_tid:
+                    groups.append((current_parts, current_returns, current_tid))
+                    current_parts = []
+                    current_returns = []
+                    current_tid = tid
+                current_parts.append(part)
+                if part.tool_call_id in result_by_id:
+                    current_returns.append(
+                        ToolReturnPart(
+                            tool_name=part.tool_name,
+                            content=result_by_id[part.tool_call_id],
+                            tool_call_id=part.tool_call_id,
+                        )
+                    )
+            else:
+                current_parts.append(part)
+
+        if current_parts:
+            groups.append((current_parts, current_returns, current_tid))
+
+        if not groups:
+            return
+
+        single = len(groups) == 1
+        for parts, returns, tid in groups:
+            sub_response = response if single else replace(response, parts=parts)
+            self.conversation_log.send(
+                ResponseReceived(response=sub_response, owning_task_id=tid)
+            )
+            if returns:
+                self.conversation_log.send(
+                    ToolResultsReceived(
+                        request=ModelRequest(parts=returns),
+                        owning_task_id=tid,
+                    )
+                )
 
     async def handle_widget_event(
         self,
